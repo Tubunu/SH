@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models.dart';
 import '../../core/settings.dart';
 import '../common/share_actions.dart';
+import '../common/swipe_back_wrapper.dart';
 
 /// Full-screen image viewer: swipe horizontally, pinch to zoom, drag down to
 /// dismiss — the same gesture set as the original `GalleryActivity`.
@@ -75,29 +76,33 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
     final allowClickBack = settings.flag('click_photo_back');
     final opacity = (1 - _dragOffset.abs() / 400).clamp(0.2, 1.0);
 
-    return Scaffold(
-      backgroundColor: Colors.black.withValues(alpha: opacity),
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onVerticalDragUpdate: canDragDismiss
-            ? (details) => setState(() => _dragOffset += details.delta.dy)
-            : null,
-        onVerticalDragEnd: canDragDismiss
-            ? (_) {
-                if (_dragOffset.abs() > 120) {
-                  Navigator.of(context).maybePop();
-                } else {
-                  setState(() => _dragOffset = 0);
+    return SwipeBackGuard(
+      disabled: _isZoomed,
+      child: Scaffold(
+        backgroundColor: Colors.black.withValues(alpha: opacity),
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragUpdate: canDragDismiss
+              ? (details) => setState(() => _dragOffset += details.delta.dy)
+              : null,
+          onVerticalDragEnd: canDragDismiss
+              ? (_) {
+                  if (_dragOffset.abs() > 120) {
+                    Navigator.of(context).maybePop();
+                  } else {
+                    setState(() => _dragOffset = 0);
+                  }
                 }
-              }
-            : null,
-        child: Transform.translate(
-          offset: Offset(0, _dragOffset),
-          child: Stack(
-            children: [
-              PageView.builder(
-                controller: _controller,
-                physics: _isZoomed ? const NeverScrollableScrollPhysics() : null,
+              : null,
+          child: Transform.translate(
+            offset: Offset(0, _dragOffset),
+            child: Stack(
+              children: [
+                PageView.builder(
+                  controller: _controller,
+                  physics: (_isZoomed || widget.pics.length <= 1)
+                      ? const NeverScrollableScrollPhysics()
+                      : null,
                 itemCount: widget.pics.length,
                 onPageChanged: (i) => setState(() {
                   _index = i;
@@ -164,7 +169,8 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
                   ],
                 ),
               ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -273,6 +279,7 @@ class _ZoomableGalleryImageState extends State<_ZoomableGalleryImage>
             transformationController: _transformController,
             minScale: 1,
             maxScale: 4,
+            onInteractionUpdate: (_) => widget.onZoomChanged(_isZoomed),
             onInteractionEnd: (_) => widget.onZoomChanged(_isZoomed),
             child: SizedBox(
               width: viewportSize.width,

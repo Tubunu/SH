@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/settings.dart';
+import 'common/swipe_back_wrapper.dart';
 
 /// Dynamic Share (v3.9.6) theme token registry (`C5361oOoOooO` + `styles.xml`).
 class ShareColors {
@@ -141,6 +142,15 @@ class ShareTheme {
       cardColor: ShareColors.cardBg,
       dividerColor: ShareColors.divider,
       splashFactory: InkRipple.splashFactory,
+      pageTransitionsTheme: PageTransitionsTheme(
+        builders: {
+          for (final platform in TargetPlatform.values)
+            platform: ShareSwipeBackPageTransitionsBuilder(
+              platform: platform,
+              fallbackSwipeBackMode: settings?.swipeBackMode ?? 3,
+            ),
+        },
+      ),
     );
 
     return base.copyWith(

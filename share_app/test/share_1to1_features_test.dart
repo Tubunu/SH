@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1687,5 +1688,233 @@ void main() {
 
     expect(find.byType(ComposePage), findsOneWidget);
     expect(find.text('保存'), findsOneWidget);
+  });
+
+  testWidgets('Mid-screen swipe-back pops pushed routes on iOS, respects swipe_back modes, PopScope, TabBarView, and GalleryPage zoom',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    try {
+      Future<SettingsNotifier> pumpNavHost({
+        required TargetPlatform platform,
+        required int swipeBackMode,
+        WidgetBuilder? pageBuilder,
+      }) async {
+        debugDefaultTargetPlatformOverride = platform;
+        final s = initialSettings.copyWith(
+          prefs: {...initialSettings.prefs, 'swipe_back': swipeBackMode},
+        );
+        final notifier = SettingsNotifier(s);
+        await tester.pumpWidget(
+          ProviderScope(
+            key: UniqueKey(),
+            overrides: [settingsProvider.overrideWith((_) => notifier)],
+            child: Consumer(
+              builder: (context, ref, _) {
+                final cur = ref.watch(settingsProvider);
+                return MaterialApp(
+                  theme: ShareTheme.build(
+                    ShareThemePreset.byKey(cur.themeKey),
+                    settings: cur,
+                  ),
+                  home: Builder(
+                    builder: (ctx) => Scaffold(
+                      body: Center(
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.of(ctx).push(
+                            MaterialPageRoute<void>(
+                              builder: pageBuilder ??
+                                  (_) => Scaffold(
+                                        body: ListView(
+                                          children: const [
+                                            SizedBox(
+                                              height: 1200,
+                                              child: Center(
+                                                child: Text('SecondaryPage'),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                            ),
+                          ),
+                          child: const Text('PushSecondary'),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        return notifier;
+      }
+
+      // 1. iOS: root page ignores mid-screen swipe; pushed secondary page pops on mid-screen right swipe
+      // and fast fling, while small drag or diagonal vertical scroll stays on page.
+      await pumpNavHost(platform: TargetPlatform.iOS, swipeBackMode: 3);
+      await tester.dragFrom(const Offset(195, 422), const Offset(150, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('PushSecondary'), findsOneWidget);
+
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsOneWidget);
+
+      // Diagonal vertical list scroll must not trigger back navigation.
+      await tester.dragFrom(const Offset(195, 422), const Offset(22, -220));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsOneWidget);
+
+      // Small non-fling drag does not pop.
+      await tester.dragFrom(const Offset(195, 422), const Offset(28, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsOneWidget);
+
+      // Mid-screen right swipe pops on iOS.
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsNothing);
+      expect(find.text('PushSecondary'), findsOneWidget);
+
+      // Fast right fling from center also pops on iOS.
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      await tester.flingFrom(const Offset(195, 422), const Offset(60, 0), 900);
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsNothing);
+
+      // 2. Respect swipe_back modes: 1 (right only), 2 (left only), 4 (disabled).
+      final notifier =
+          await pumpNavHost(platform: TargetPlatform.android, swipeBackMode: 1);
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(195, 422), const Offset(-160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsOneWidget);
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsNothing);
+
+      notifier.setPref('swipe_back', 2);
+      await tester.pump();
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsOneWidget);
+      await tester.dragFrom(const Offset(195, 422), const Offset(-160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsNothing);
+
+      notifier.setPref('swipe_back', 4);
+      await tester.pump();
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsOneWidget);
+
+      // 3. PopScope(canPop: false) is respected via maybePop() instead of bypassing.
+      var popInvoked = 0;
+      await pumpNavHost(
+        platform: TargetPlatform.iOS,
+        swipeBackMode: 3,
+        pageBuilder: (_) => PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) popInvoked++;
+          },
+          child: const Scaffold(body: Center(child: Text('GuardedPage'))),
+        ),
+      );
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(popInvoked, 1);
+      expect(find.text('GuardedPage'), findsOneWidget);
+
+      // 4. TabBarView: Tab 0 -> Tab 1 swipe left switches tab instead of popping;
+      // Tab 1 -> Tab 0 swipe right returns to Tab 0 instead of popping;
+      // Tab 0 overscroll swipe right pops the route.
+      await pumpNavHost(
+        platform: TargetPlatform.iOS,
+        swipeBackMode: 3,
+        pageBuilder: (_) => DefaultTabController(
+          length: 2,
+          child: Scaffold(
+            appBar: AppBar(title: const Text('TabsHost')),
+            body: const TabBarView(
+              children: [
+                Center(child: Text('TabZero')),
+                Center(child: Text('TabOne')),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      expect(find.text('TabZero'), findsOneWidget);
+
+      await tester.dragFrom(const Offset(320, 422), const Offset(-260, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('TabOne'), findsOneWidget);
+      expect(find.text('TabsHost'), findsOneWidget);
+
+      await tester.dragFrom(const Offset(70, 422), const Offset(260, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('TabZero'), findsOneWidget);
+      expect(find.text('TabsHost'), findsOneWidget);
+
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('TabsHost'), findsNothing);
+      expect(find.text('PushSecondary'), findsOneWidget);
+
+      // 5. GalleryPage: 2.5x zoomed image does NOT pop on mid-screen right swipe;
+      // unzoomed single-pic GalleryPage pops cleanly on mid-screen right swipe.
+      await pumpNavHost(
+        platform: TargetPlatform.iOS,
+        swipeBackMode: 3,
+        pageBuilder: (_) => const GalleryPage(
+          pics: [Pic(url: 'https://example.com/solo.jpg')],
+        ),
+      );
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      expect(find.byType(GalleryPage), findsOneWidget);
+
+      final center = tester.getCenter(find.byType(InteractiveViewer));
+      await tester.tapAt(center);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(center);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.byType(GalleryPage), findsOneWidget);
+
+      await tester.tapAt(center);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(center);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      await tester.dragFrom(const Offset(195, 422), const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(find.byType(GalleryPage), findsNothing);
+      expect(find.text('PushSecondary'), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }
