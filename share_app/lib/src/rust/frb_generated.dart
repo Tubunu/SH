@@ -653,6 +653,7 @@ abstract class RustLibApi extends BaseApi {
     required String statusId,
     required String content,
     String? picId,
+    int? visible,
   });
 
   Future<String> crateApiShareApiStatusModifyVisible({
@@ -5105,6 +5106,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String statusId,
     required String content,
     String? picId,
+    int? visible,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -5113,6 +5115,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(statusId, serializer);
           sse_encode_String(content, serializer);
           sse_encode_opt_String(picId, serializer);
+          sse_encode_opt_box_autoadd_i_32(visible, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -5125,7 +5128,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiShareApiStatusModifyConstMeta,
-        argValues: [statusId, content, picId],
+        argValues: [statusId, content, picId, visible],
         apiImpl: this,
       ),
     );
@@ -5134,7 +5137,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiShareApiStatusModifyConstMeta =>
       const TaskConstMeta(
         debugName: "status_modify",
-        argNames: ["statusId", "content", "picId"],
+        argNames: ["statusId", "content", "picId", "visible"],
       );
 
   @override

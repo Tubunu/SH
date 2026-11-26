@@ -21,14 +21,21 @@ import 'watermark.dart';
 
 /// A picture chosen from the gallery, before it is uploaded.
 class _PickedImage {
-  final Uint8List bytes;
+  final Uint8List? bytes;
+  final String? networkUrl;
   final String name;
   final String mime;
 
-  /// Weibo's `pid`, filled in once the upload succeeds.
+  /// Weibo's `pid`, filled in once the upload succeeds or from existing status pic.
   String? pid;
 
-  _PickedImage({required this.bytes, required this.name, required this.mime});
+  _PickedImage({
+    this.bytes,
+    this.networkUrl,
+    required this.name,
+    required this.mime,
+    this.pid,
+  });
 }
 
 class ComposePage extends ConsumerStatefulWidget {
@@ -38,7 +45,15 @@ class ComposePage extends ConsumerStatefulWidget {
   /// Draft id to update / delete on the way out.
   final String? draftId;
 
-  const ComposePage({super.key, this.initialText, this.draftId});
+  /// Existing post to edit in full Share composer mode (`statuses/modify_weibo`).
+  final Status? editStatus;
+
+  const ComposePage({
+    super.key,
+    this.initialText,
+    this.draftId,
+    this.editStatus,
+  });
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
@@ -67,15 +82,55 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   String _mentionQuery = '';
   int _mentionStart = -1;
 
+  bool get _isEditing => widget.editStatus != null;
+
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialText ?? '');
+    final edit = widget.editStatus;
+    final initial = edit != null ? _initialEditText(edit.textRaw) : (widget.initialText ?? '');
+    _controller = TextEditingController(text: initial);
     _draftId = widget.draftId;
-    _options = ComposeOptions(
-      tail: ref.read(settingsProvider).publishTail.isNotEmpty,
-    );
+    if (edit != null) {
+      _visible = const {0, 1, 2}.contains(edit.visible) ? edit.visible : 0;
+      for (final pic in edit.pics.take(_maxImages)) {
+        final pid = pic.pid ?? Pic.extractPid(pic.large ?? pic.url);
+        _images.add(_PickedImage(
+          networkUrl: pic.url,
+          name: pid ?? 'image.jpg',
+          mime: 'image/jpeg',
+          pid: pid,
+        ));
+      }
+      _options = const ComposeOptions();
+      if (edit.isLongText &&
+          (edit.textRaw.contains('...全文') || edit.textRaw.endsWith('...'))) {
+        unawaited(_loadEditLongText(edit, initial));
+      }
+    } else {
+      _options = ComposeOptions(
+        tail: ref.read(settingsProvider).publishTail.isNotEmpty,
+      );
+    }
     _controller.addListener(_onTextChanged);
+  }
+
+  static String _initialEditText(String raw) {
+    return raw.replaceFirst(RegExp(r'\s*\.\.\.\s*全文$'), '').trimRight();
+  }
+
+  Future<void> _loadEditLongText(Status edit, String seededText) async {
+    try {
+      final fullHtml = await WeiboApi.instance.longText(edit.id);
+      if (!mounted || fullHtml.isEmpty) return;
+      final fullPlain = RichTextParser.toPlain(fullHtml).trim();
+      if (fullPlain.isNotEmpty && _controller.text == seededText) {
+        _controller.value = TextEditingValue(
+          text: fullPlain,
+          selection: TextSelection.collapsed(offset: fullPlain.length),
+        );
+      }
+    } catch (_) {}
   }
 
   @override
@@ -226,9 +281,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     setState(() {
       _options = result;
       // 已上传的 pid 绑定的是"上一次上传的那串字节 / 那个账号"，选项一改就不再成立，
-      // 直接作废，下次发送重新上传，避免水印被跳过或拿旧账号的 pid 发布。
+      // 直接作废，下次发送重新上传，避免水印被跳过或拿旧账号的 pid 发布；
+      // 但编辑原微博保留的线上图片不重置 pid。
       for (final image in _images) {
-        image.pid = null;
+        if (image.bytes != null) {
+          image.pid = null;
+        }
       }
     });
   }
@@ -290,22 +348,30 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
     setState(() {
       _sending = true;
-      _progress = _images.isEmpty ? '' : '上传图片 0/${_images.length}';
+      final needUpload = _images.where((e) => e.pid == null && e.bytes != null).length;
+      _progress = needUpload == 0 ? '' : '上传图片 0/$needUpload';
     });
 
     try {
-      // Upload any picture that does not have a pid yet.
+      // Upload any newly added local picture that does not have a pid yet.
       final pids = <String>[];
+      final toUploadCount = _images.where((e) => e.pid == null && e.bytes != null).length;
+      var uploadedIdx = 0;
       for (var i = 0; i < _images.length; i++) {
         final image = _images[i];
-        if (image.pid == null) {
-          if (mounted) setState(() => _progress = '上传图片 ${i + 1}/${_images.length}');
+        if (image.pid == null && image.bytes != null) {
+          uploadedIdx++;
+          if (mounted) {
+            setState(() => _progress = '上传图片 $uploadedIdx/$toUploadCount');
+          }
 
-          var bytes = image.bytes;
+          var bytes = image.bytes!;
           var name = image.name;
           var mime = image.mime;
           if (_options.watermark) {
-            if (mounted) setState(() => _progress = '合成水印 ${i + 1}/${_images.length}');
+            if (mounted) {
+              setState(() => _progress = '合成水印 $uploadedIdx/$toUploadCount');
+            }
             final marked = await applyWatermark(bytes, text: _watermarkText);
             // 合成失败时 applyWatermark 原样返回同一个实例，此时按原始字节上传，
             // 不能把 jpeg 标成 png，微博侧会拒收。
@@ -318,21 +384,33 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
           image.pid = await WeiboApi.instance.uploadPicture(bytes, name, mime);
         }
-        pids.add(image.pid!);
+        final pid = image.pid;
+        if (pid != null && pid.isNotEmpty) {
+          pids.add(pid);
+        }
       }
 
-      if (mounted) setState(() => _progress = '发布中…');
-      final tail = _options.tail ? ref.read(settingsProvider).publishTail : '';
-      await WeiboApi.instance.publish(
-        text,
-        visible: _visible,
-        picIds: pids.join(','),
-        tail: tail,
-      );
-
-      final draftId = _draftId;
-      if (draftId != null && draftId.isNotEmpty) {
-        await DraftStore.remove(draftId);
+      if (_isEditing) {
+        if (mounted) setState(() => _progress = '保存中…');
+        await ShareCore.instance.statusModify(
+          widget.editStatus!.id,
+          text,
+          picIds: pids.isEmpty ? null : pids.join(','),
+          visible: _visible,
+        );
+      } else {
+        if (mounted) setState(() => _progress = '发布中…');
+        final tail = _options.tail ? ref.read(settingsProvider).publishTail : '';
+        await WeiboApi.instance.publish(
+          text,
+          visible: _visible,
+          picIds: pids.join(','),
+          tail: tail,
+        );
+        final draftId = _draftId;
+        if (draftId != null && draftId.isNotEmpty) {
+          await DraftStore.remove(draftId);
+        }
       }
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -364,9 +442,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   /// Leaving with unsaved content silently keeps it, so nothing is ever lost.
   Future<void> _close() async {
     if (_sending) return;
-    final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      _draftId = await DraftStore.save(id: _draftId, text: _controller.text);
+    if (!_isEditing) {
+      final text = _controller.text.trim();
+      if (text.isNotEmpty) {
+        _draftId = await DraftStore.save(id: _draftId, text: _controller.text);
+      }
     }
     if (mounted) Navigator.of(context).pop();
   }
@@ -425,7 +505,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       child: Scaffold(
         backgroundColor: ShareColors.cardBg,
         appBar: AppBar(
-          title: Text(_progress.isEmpty ? '发微博' : _progress),
+          title: Text(_progress.isEmpty ? (_isEditing ? '编辑微博' : '发微博') : _progress),
           leading: TextButton(
             onPressed: _sending ? null : _close,
             child: Text('取消', style: TextStyle(color: ShareColors.textSecondary)),
@@ -435,15 +515,16 @@ class _ComposePageState extends ConsumerState<ComposePage> {
             IconButton(
               onPressed: _sending ? null : _openOptions,
               icon: const Icon(Icons.more_horiz, size: 22),
-              tooltip: '发送选项',
+              tooltip: _isEditing ? '图片选项' : '发送选项',
             ),
-            TextButton(
-              onPressed: _sending ? null : _saveDraft,
-              child: Text(
-                '存草稿',
-                style: TextStyle(fontSize: 13, color: ShareColors.textSecondary),
+            if (!_isEditing)
+              TextButton(
+                onPressed: _sending ? null : _saveDraft,
+                child: Text(
+                  '存草稿',
+                  style: TextStyle(fontSize: 13, color: ShareColors.textSecondary),
+                ),
               ),
-            ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
               child: FilledButton(
@@ -459,7 +540,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                       )
-                    : const Text('发送', style: TextStyle(fontSize: 14)),
+                    : Text(_isEditing ? '保存' : '发送', style: const TextStyle(fontSize: 14)),
               ),
             ),
           ],
@@ -475,20 +556,23 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                   expands: true,
                   maxLength: 2000,
                   textAlignVertical: TextAlignVertical.top,
-                  autofocus: (widget.initialText ?? '').isEmpty && _images.isEmpty,
+                  autofocus: !_isEditing && (widget.initialText ?? '').isEmpty && _images.isEmpty,
                   style: const TextStyle(fontSize: 16, height: 1.5),
                   decoration: InputDecoration(
                     border: InputBorder.none,
                     counterText: '',
-                    hintText: '分享新鲜事…',
+                    hintText: _isEditing ? '编辑微博正文…' : '分享新鲜事…',
                     hintStyle: TextStyle(fontSize: 16, color: ShareColors.textHint),
                   ),
                 ),
               ),
             ),
+            if (_isEditing && widget.editStatus?.retweeted != null)
+              _retweetPreview(widget.editStatus!.retweeted!),
             if (_images.isNotEmpty) _imageGrid(),
             if (_mentionUsers.isNotEmpty) _mentionStrip(),
-            if (_options.tail || ref.watch(settingsProvider).publishTail.isNotEmpty)
+            if (!_isEditing &&
+                (_options.tail || ref.watch(settingsProvider).publishTail.isNotEmpty))
               _tailHint(),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -707,22 +791,52 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     );
   }
 
-  Widget _thumb(Uint8List bytes, double cell) {
+  Widget _retweetPreview(Status rt) {
+    final author = rt.user?.name.isNotEmpty == true ? '@${rt.user!.name}' : '原微博';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: ShareColors.inputBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: ShareColors.divider, width: 0.5),
+      ),
+      child: Text(
+        '$author: ${rt.textRaw}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 12.5, color: ShareColors.textSecondary, height: 1.4),
+      ),
+    );
+  }
+
+  Widget _thumb(_PickedImage img, double cell) {
+    final fallback = Container(
+      width: cell,
+      height: cell,
+      color: ShareColors.placeholder,
+      child: Icon(Icons.broken_image, color: ShareColors.textHint),
+    );
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: Image.memory(
-        bytes,
-        width: cell,
-        height: cell,
-        fit: BoxFit.cover,
-        cacheWidth: 300,
-        errorBuilder: (_, _, _) => Container(
-          width: cell,
-          height: cell,
-          color: ShareColors.placeholder,
-          child: Icon(Icons.broken_image, color: ShareColors.textHint),
-        ),
-      ),
+      child: img.bytes != null
+          ? Image.memory(
+              img.bytes!,
+              width: cell,
+              height: cell,
+              fit: BoxFit.cover,
+              cacheWidth: 300,
+              errorBuilder: (_, _, _) => fallback,
+            )
+          : Image.network(
+              img.networkUrl ?? '',
+              width: cell,
+              height: cell,
+              fit: BoxFit.cover,
+              cacheWidth: 300,
+              errorBuilder: (_, _, _) => fallback,
+            ),
     );
   }
 
@@ -753,11 +867,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     ),
                   ],
                 ),
-                child: _thumb(image.bytes, cell),
+                child: _thumb(image, cell),
               ),
             ),
           ),
-          childWhenDragging: Opacity(opacity: 0.25, child: _thumb(image.bytes, cell)),
+          childWhenDragging: Opacity(opacity: 0.25, child: _thumb(image, cell)),
           child: Stack(
             clipBehavior: Clip.none,
             children: [
@@ -769,7 +883,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                         border: Border.all(color: ShareColors.accent, width: 1.5),
                       )
                     : null,
-                child: _thumb(image.bytes, cell),
+                child: _thumb(image, cell),
               ),
               Positioned(
                 top: -6,

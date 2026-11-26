@@ -548,10 +548,12 @@ Future<String> statusModify({
   required String statusId,
   required String content,
   String? picId,
+  int? visible,
 }) => RustLib.instance.api.crateApiShareApiStatusModify(
   statusId: statusId,
   content: content,
   picId: picId,
+  visible: visible,
 );
 
 Future<String> commentDelete({

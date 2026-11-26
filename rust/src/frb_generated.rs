@@ -1379,9 +1379,10 @@ let api_count = <u32>::sse_decode(&mut deserializer);deserializer.end(); move |c
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_status_id = <String>::sse_decode(&mut deserializer);
 let api_content = <String>::sse_decode(&mut deserializer);
-let api_pic_id = <Option<String>>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+let api_pic_id = <Option<String>>::sse_decode(&mut deserializer);
+let api_visible = <Option<i32>>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
                     transform_result_sse::<_, String>((move || async move {
-                         let output_ok = crate::api::share_api::status_modify(api_status_id, api_content, api_pic_id).await?;   std::result::Result::Ok(output_ok)
+                         let output_ok = crate::api::share_api::status_modify(api_status_id, api_content, api_pic_id, api_visible).await?;   std::result::Result::Ok(output_ok)
                     })().await)
                 } })
             }fn wire__crate__api__share_api__status_modify_visible_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {

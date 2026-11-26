@@ -434,10 +434,16 @@ class ShareCore {
     String statusId,
     String content, {
     String? picIds,
+    int? visible,
   }) async {
     await ensureInit();
     return _decodeMap(
-      await rust.statusModify(statusId: statusId, content: content, picId: picIds),
+      await rust.statusModify(
+        statusId: statusId,
+        content: content,
+        picId: picIds,
+        visible: visible,
+      ),
     );
   }
 

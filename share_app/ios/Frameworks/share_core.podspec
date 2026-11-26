@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name                = 'share_core'
-  s.version             = '1.5.1'
+  s.version             = '1.5.2'
   s.summary             = 'Rust native core framework for Share iOS.'
   s.description         = 'Cross-platform Rust core (crypto, HTTP client, SQLite store, WeSync codec) for Share.'
   s.homepage            = 'https://github.com'

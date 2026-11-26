@@ -30,6 +30,7 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
   late final PageController _controller;
   late int _index;
   double _dragOffset = 0;
+  bool _isZoomed = false;
 
   @override
   void initState() {
@@ -70,6 +71,7 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     final allowDragBack = settings.flag('drag_photo_back');
+    final canDragDismiss = allowDragBack && !_isZoomed;
     final allowClickBack = settings.flag('click_photo_back');
     final opacity = (1 - _dragOffset.abs() / 400).clamp(0.2, 1.0);
 
@@ -77,10 +79,10 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
       backgroundColor: Colors.black.withValues(alpha: opacity),
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onVerticalDragUpdate: allowDragBack
+        onVerticalDragUpdate: canDragDismiss
             ? (details) => setState(() => _dragOffset += details.delta.dy)
             : null,
-        onVerticalDragEnd: allowDragBack
+        onVerticalDragEnd: canDragDismiss
             ? (_) {
                 if (_dragOffset.abs() > 120) {
                   Navigator.of(context).maybePop();
@@ -95,39 +97,23 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
             children: [
               PageView.builder(
                 controller: _controller,
+                physics: _isZoomed ? const NeverScrollableScrollPhysics() : null,
                 itemCount: widget.pics.length,
-                onPageChanged: (i) => setState(() => _index = i),
+                onPageChanged: (i) => setState(() {
+                  _index = i;
+                  _isZoomed = false;
+                }),
                 itemBuilder: (context, index) {
                   final imgUrl = _urlForIndex(index);
-                  return GestureDetector(
+                  return _ZoomableGalleryImage(
+                    imageUrl: imgUrl,
                     onTap: allowClickBack ? () => Navigator.of(context).maybePop() : null,
                     onLongPress: () => _showImageMenu(index),
-                    child: InteractiveViewer(
-                      minScale: 1,
-                      maxScale: 4,
-                      child: Center(
-                        child: Image.network(
-                          imgUrl,
-                          fit: BoxFit.contain,
-                          loadingBuilder: (context, child, progress) {
-                            if (progress == null) return child;
-                            return const Center(
-                              child: SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white70),
-                              ),
-                            );
-                          },
-                          errorBuilder: (_, _, _) => const Icon(
-                            Icons.broken_image_outlined,
-                            color: Colors.white38,
-                            size: 40,
-                          ),
-                        ),
-                      ),
-                    ),
+                    onZoomChanged: (zoomed) {
+                      if (index == _index && _isZoomed != zoomed && mounted) {
+                        setState(() => _isZoomed = zoomed);
+                      }
+                    },
                   );
                 },
               ),
@@ -182,6 +168,143 @@ class _GalleryPageState extends ConsumerState<GalleryPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ZoomableGalleryImage extends StatefulWidget {
+  final String imageUrl;
+  final VoidCallback? onTap;
+  final VoidCallback onLongPress;
+  final ValueChanged<bool> onZoomChanged;
+
+  const _ZoomableGalleryImage({
+    required this.imageUrl,
+    required this.onTap,
+    required this.onLongPress,
+    required this.onZoomChanged,
+  });
+
+  @override
+  State<_ZoomableGalleryImage> createState() => _ZoomableGalleryImageState();
+}
+
+class _ZoomableGalleryImageState extends State<_ZoomableGalleryImage>
+    with SingleTickerProviderStateMixin {
+  static const double _doubleTapScale = 2.5;
+
+  final TransformationController _transformController = TransformationController();
+  late final AnimationController _animController;
+  Animation<Matrix4>? _animation;
+  Offset _doubleTapPosition = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    )..addListener(() {
+        final anim = _animation;
+        if (anim != null) {
+          _transformController.value = anim.value;
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  bool get _isZoomed => _transformController.value.getMaxScaleOnAxis() > 1.05;
+
+  Matrix4 _zoomMatrixFor(Offset focalPoint, double scale, Size viewportSize) {
+    final maxDx = (viewportSize.width * (scale - 1)).clamp(0.0, double.infinity);
+    final maxDy = (viewportSize.height * (scale - 1)).clamp(0.0, double.infinity);
+    final dx = (-focalPoint.dx * (scale - 1)).clamp(-maxDx, 0.0);
+    final dy = (-focalPoint.dy * (scale - 1)).clamp(-maxDy, 0.0);
+    return Matrix4.identity()
+      ..setEntry(0, 0, scale)
+      ..setEntry(1, 1, scale)
+      ..setEntry(2, 2, 1.0)
+      ..setEntry(0, 3, dx)
+      ..setEntry(1, 3, dy);
+  }
+
+  void _animateTo(Matrix4 target, {required bool zoomed}) {
+    _animation = Matrix4Tween(
+      begin: _transformController.value,
+      end: target,
+    ).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+    );
+    _animController.forward(from: 0);
+    widget.onZoomChanged(zoomed);
+  }
+
+  void _handleDoubleTap(Size viewportSize) {
+    if (_isZoomed) {
+      _animateTo(Matrix4.identity(), zoomed: false);
+    } else {
+      final target = _zoomMatrixFor(
+        _doubleTapPosition,
+        _doubleTapScale,
+        viewportSize,
+      );
+      _animateTo(target, zoomed: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportSize = constraints.biggest;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
+          onDoubleTapDown: (details) => _doubleTapPosition = details.localPosition,
+          onDoubleTap: () => _handleDoubleTap(viewportSize),
+          child: InteractiveViewer(
+            transformationController: _transformController,
+            minScale: 1,
+            maxScale: 4,
+            onInteractionEnd: (_) => widget.onZoomChanged(_isZoomed),
+            child: SizedBox(
+              width: viewportSize.width,
+              height: viewportSize.height,
+              child: Center(
+                child: Image.network(
+                  widget.imageUrl,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    );
+                  },
+                  errorBuilder: (_, _, _) => const Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.white38,
+                    size: 40,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

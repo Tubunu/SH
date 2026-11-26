@@ -725,6 +725,52 @@ impl ApiCnClient {
             .await
     }
 
+    /// Executes an authenticated + `cum`-signed `POST https://api.weibo.cn/2/{path}`
+    /// with a `multipart/form-data` body (used by `statuses/modify_weibo`, etc.).
+    pub async fn post_multipart_2(
+        &self,
+        path: &str,
+        extra_query: BTreeMap<String, String>,
+        extra_form: BTreeMap<String, String>,
+    ) -> Result<Value, ApiCnError> {
+        for attempt in 0..=1 {
+            let snap = self.session();
+            let mut query = snap.common_params(true);
+            for (k, v) in &extra_query {
+                query.insert(k.clone(), v.clone());
+            }
+            let (url, suffix_path) =
+                build_signed_url(path, &query, &snap.aid, true, true)?;
+            let headers = self.build_headers(&snap);
+            let mut form_fields = snap.common_params(true);
+            for (k, v) in &extra_form {
+                form_fields.insert(k.clone(), v.clone());
+            }
+            let mut form = Form::new();
+            for (k, v) in form_fields {
+                form = form.text(k, v);
+            }
+            let resp = self
+                .http
+                .post(&url)
+                .headers(headers)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| ApiCnError::Transport(e.to_string()))?;
+            match self.consume_response(resp).await {
+                Ok(val) => return Ok(val),
+                Err(ApiCnError::WeiboApi { errno: -200, .. })
+                    if attempt == 0 && !INTERCEPTOR_SKIP_PATHS.contains(&suffix_path.as_str()) =>
+                {
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        unreachable!("loop returns on attempt == 1")
+    }
+
     /// Uploads a picture using `https://upload.api.weibo.com/2/mss/upload.json`.
     pub async fn upload_pic_mss(
         &self,

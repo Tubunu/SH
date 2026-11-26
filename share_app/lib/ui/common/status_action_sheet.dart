@@ -177,36 +177,36 @@ Future<void> showStatusActionSheet(
                     Divider(height: 8, thickness: 0.5, color: ShareColors.divider),
                     row(Icons.edit_outlined, '编辑微博', () async {
                       Navigator.pop(ctx);
-                      final edited = await showTextInputDialog(
-                        context,
-                        title: '编辑微博',
-                        initial: status.textRaw,
-                        maxLines: 6,
+                      final updated = await Navigator.of(context).push<bool>(
+                        MaterialPageRoute(
+                          builder: (_) => ComposePage(editStatus: status),
+                        ),
                       );
-                      if (edited == null || edited.trim().isEmpty) return;
-                      try {
-                        await ShareCore.instance.statusModify(status.id, edited.trim());
+                      if (updated == true) {
                         if (context.mounted) _toast(context, '已保存修改');
                         onChanged?.call();
-                      } catch (_) {
-                        if (context.mounted) {
-                          _toast(context, '移动编辑受限时已为您填入发布页重发');
-                          Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => ComposePage(initialText: edited),
-                          ));
+                      }
+                    }),
+                    row(
+                      status.isTop ? Icons.vertical_align_bottom : Icons.vertical_align_top,
+                      status.isTop ? '取消个人主页置顶' : '设为个人主页置顶',
+                      () async {
+                        final wantTop = !status.isTop;
+                        Navigator.pop(ctx);
+                        try {
+                          await ShareCore.instance.statusSetTop(
+                            status.id,
+                            isTop: wantTop,
+                          );
+                          if (context.mounted) {
+                            _toast(context, wantTop ? '已置顶' : '已取消置顶');
+                          }
+                          onChanged?.call();
+                        } catch (e) {
+                          if (context.mounted) _toast(context, _humanize(e));
                         }
-                      }
-                    }),
-                    row(Icons.vertical_align_top, '设为个人主页置顶', () async {
-                      Navigator.pop(ctx);
-                      try {
-                        await ShareCore.instance.statusSetTop(status.id, isTop: true);
-                        if (context.mounted) _toast(context, '已置顶');
-                        onChanged?.call();
-                      } catch (e) {
-                        if (context.mounted) _toast(context, _humanize(e));
-                      }
-                    }),
+                      },
+                    ),
                     row(Icons.lock_outline, '修改可见范围', () async {
                       Navigator.pop(ctx);
                       final picked = await showDialog<int>(

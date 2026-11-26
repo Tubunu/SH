@@ -309,6 +309,7 @@ class Pic {
   final int width;
   final int height;
   final String? videoUrl;
+  final String? pid;
 
   const Pic({
     required this.url,
@@ -316,7 +317,18 @@ class Pic {
     this.width = 0,
     this.height = 0,
     this.videoUrl,
+    this.pid,
   });
+
+  static String? extractPid(String url) {
+    final uri = Uri.tryParse(url);
+    final seg = (uri != null && uri.pathSegments.isNotEmpty)
+        ? uri.pathSegments.last
+        : url;
+    final dot = seg.indexOf('.');
+    final stem = dot > 0 ? seg.substring(0, dot) : seg;
+    return RegExp(r'^[A-Za-z0-9]{16,40}$').hasMatch(stem) ? stem : null;
+  }
 
   double get aspectRatio => (width > 0 && height > 0) ? width / height : 1;
 
@@ -345,6 +357,7 @@ class Pic {
           large: origUrl is String ? origUrl : null,
           width: (large['width'] as num?)?.toInt() ?? 0,
           height: (large['height'] as num?)?.toInt() ?? 0,
+          pid: id,
         ));
       }
       if (pics.isNotEmpty) return pics;
@@ -355,9 +368,10 @@ class Pic {
       final largeMap = singlePic['large'];
       final largeUrl = largeMap is Map ? '${largeMap['url'] ?? ''}' : '';
       final thumbUrl = '${singlePic['url'] ?? ''}';
-      if (thumbUrl.isNotEmpty || largeUrl.isNotEmpty) {
+      final resolvedUrl = thumbUrl.isNotEmpty ? thumbUrl : largeUrl;
+      if (resolvedUrl.isNotEmpty) {
         pics.add(Pic(
-          url: thumbUrl.isNotEmpty ? thumbUrl : largeUrl,
+          url: resolvedUrl,
           large: largeUrl.isNotEmpty ? largeUrl : null,
           width: ((singlePic['width'] ?? (geo is Map ? geo['width'] : null)) as num?)
                   ?.toInt() ??
@@ -365,6 +379,7 @@ class Pic {
           height: ((singlePic['height'] ?? (geo is Map ? geo['height'] : null)) as num?)
                   ?.toInt() ??
               0,
+          pid: (singlePic['pid'] as String?) ?? extractPid(largeUrl.isNotEmpty ? largeUrl : thumbUrl),
         ));
       }
       if (pics.isNotEmpty) return pics;
@@ -377,9 +392,10 @@ class Pic {
         final largeGeo = largeMap is Map ? largeMap['geo'] : null;
         final u = '${p['url'] ?? ''}';
         if (u.isEmpty) continue;
+        final largeUrl = largeMap is Map ? largeMap['url'] as String? : null;
         pics.add(Pic(
           url: u,
-          large: largeMap is Map ? largeMap['url'] as String? : null,
+          large: largeUrl,
           width: ((p['width'] ??
                       (geo is Map ? geo['width'] : null) ??
                       (largeGeo is Map ? largeGeo['width'] : null)) as num?)
@@ -391,6 +407,7 @@ class Pic {
                   ?.toInt() ??
               0,
           videoUrl: p['video_url'] as String?,
+          pid: (p['pid'] as String?) ?? extractPid(largeUrl ?? u),
         ));
       }
     }
@@ -403,6 +420,7 @@ class Pic {
         if (width > 0) 'width': width,
         if (height > 0) 'height': height,
         if (videoUrl != null) 'video_url': videoUrl,
+        if (pid != null) 'pid': pid,
       };
 }
 
@@ -426,6 +444,8 @@ class Status {
   final bool isLongText;
   final bool favorited;
   final bool liked;
+  final bool isTop;
+  final int visible;
   final String region;
   final bool isVideo;
   final int videoDuration;
@@ -451,6 +471,8 @@ class Status {
     this.isLongText = false,
     this.favorited = false,
     this.liked = false,
+    this.isTop = false,
+    this.visible = 0,
     this.region = '',
     this.isVideo = false,
     this.videoDuration = 0,
@@ -483,6 +505,7 @@ class Status {
           large: (info['original']?['url'] ?? large['url']) as String?,
           width: (large['width'] as num?)?.toInt() ?? 0,
           height: (large['height'] as num?)?.toInt() ?? 0,
+          pid: id,
         ));
         // keep bmiddle for grid when large is oversized
         if (bmid != null && pics.isNotEmpty) {
@@ -495,9 +518,11 @@ class Status {
           final geo = p['geo'];
           final largeMap = p['large'];
           final largeGeo = largeMap is Map ? largeMap['geo'] : null;
+          final u = (p['url'] ?? '') as String;
+          final largeUrl = largeMap is Map ? largeMap['url'] as String? : null;
           pics.add(Pic(
-            url: (p['url'] ?? '') as String,
-            large: largeMap is Map ? largeMap['url'] as String? : null,
+            url: u,
+            large: largeUrl,
             width: ((p['width'] ??
                     (geo is Map ? geo['width'] : null) ??
                     (largeGeo is Map ? largeGeo['width'] : null)) as num?)
@@ -509,6 +534,7 @@ class Status {
                 ?.toInt() ??
                 0,
             videoUrl: p['video_url'] as String?,
+            pid: (p['pid'] as String?) ?? Pic.extractPid(largeUrl ?? u),
           ));
         }
       }
@@ -520,6 +546,7 @@ class Status {
             pics.add(Pic(
               url: thumb.replaceFirst('/thumbnail/', '/bmiddle/'),
               large: thumb.replaceFirst('/thumbnail/', '/large/'),
+              pid: Pic.extractPid(thumb),
             ));
           }
         }
@@ -552,6 +579,16 @@ class Status {
         : (rawHotComment is Map
             ? Comment.fromJson(Map<String, dynamic>.from(rawHotComment))
             : null);
+    final titleObj = json['title'];
+    final isTop = json['isTop'] == 1 ||
+        json['isTop'] == true ||
+        json['is_top'] == true ||
+        (json['mblogtype'] as num?)?.toInt() == 2 ||
+        (titleObj is Map && '${titleObj['text']}'.contains('置顶'));
+    final rawVisible = json['visible'];
+    final visible = rawVisible is Map
+        ? ((rawVisible['type'] as num?)?.toInt() ?? 0)
+        : ((rawVisible as num?)?.toInt() ?? 0);
 
     return Status(
       id: '${json['idstr'] ?? json['id'] ?? ''}',
@@ -571,6 +608,8 @@ class Status {
       isLongText: (json['isLongText'] as bool? ?? false) || (longTextObj != null),
       favorited: json['favorited'] as bool? ?? false,
       liked: (json['liked'] as bool? ?? false) || attStatus == 1,
+      isTop: isTop,
+      visible: visible,
       region: '${json['region_name'] ?? ''}',
       isVideo: isVideo,
       videoDuration: (pageInfo?['media_info']?['duration'] as num?)?.toInt() ?? 0,
@@ -594,6 +633,8 @@ class Status {
     int? attitudes,
     bool? liked,
     bool? favorited,
+    bool? isTop,
+    int? visible,
     String? textHtml,
     String? textRaw,
     bool? isLongText,
@@ -615,6 +656,8 @@ class Status {
       isLongText: isLongText ?? this.isLongText,
       favorited: favorited ?? this.favorited,
       liked: liked ?? this.liked,
+      isTop: isTop ?? this.isTop,
+      visible: visible ?? this.visible,
       region: region,
       isVideo: isVideo,
       videoDuration: videoDuration,
@@ -622,6 +665,7 @@ class Status {
       videoUrl: videoUrl,
       videoObjectId: videoObjectId,
       topic: topic,
+      hotComment: hotComment,
     );
   }
 
@@ -641,6 +685,8 @@ class Status {
         'isLongText': isLongText,
         'favorited': favorited,
         'liked': liked,
+        if (isTop) 'isTop': 1,
+        if (visible != 0) 'visible': visible,
         if (region.isNotEmpty) 'region_name': region,
         if (isVideo)
           'page_info': {

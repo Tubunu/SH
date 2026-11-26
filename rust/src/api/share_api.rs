@@ -2451,33 +2451,173 @@ pub async fn filter_status(status_id: String, filter_type: i32) -> Result<String
 }
 
 pub async fn status_set_top(is_top: bool, status_id: String) -> Result<String, String> {
+    let engine = core()?;
+    let _ = engine.api_cn.ensure_guest_or_user().await;
+    let resolved = crate::net::api_cn::resolve_numeric_status_id(&status_id);
     let path = if is_top {
         "users/set_top_status"
     } else {
         "users/cancel_top_status"
     };
-    let p = json!({ "id": status_id });
-    mobile_post(path.to_string(), "{}".to_string(), p.to_string()).await
+    let mut form = BTreeMap::new();
+    // Share APK (`C2064Yd.java`) passes `mid`, not `id`; passing `id` triggers Weibo -200.
+    form.insert("mid".to_string(), resolved.clone());
+    match engine.api_cn.post_2(path, BTreeMap::new(), form).await {
+        Ok(val) => {
+            if val.get("result").and_then(|v| v.as_bool()) == Some(false) {
+                let msg = val
+                    .get("errmsg")
+                    .or_else(|| val.get("msg"))
+                    .or_else(|| val.get("error"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("置顶操作失败");
+                return Err(msg.to_string());
+            }
+            serde_json::to_string(&val).map_err(|e| e.to_string())
+        }
+        Err(mob_err) => {
+            if engine.clean_active_web_cookie().is_some() {
+                let web_url = if is_top {
+                    "https://weibo.com/ajax/statuses/setTop"
+                } else {
+                    "https://weibo.com/ajax/statuses/cancelTop"
+                };
+                if let Ok(val) = engine
+                    .web_request(
+                        "POST",
+                        web_url,
+                        &[],
+                        Some(&[("id", resolved.clone())]),
+                        &format!("https://weibo.com/detail/{resolved}"),
+                    )
+                    .await
+                {
+                    return serde_json::to_string(&val).map_err(|e| e.to_string());
+                }
+            }
+            Err(mob_err.to_string())
+        }
+    }
 }
 
 pub async fn status_modify_visible(status_id: String, visible: i32) -> Result<String, String> {
-    let p = json!({ "id": status_id, "visible": visible.to_string() });
-    mobile_post("statuses/modify_visible".to_string(), "{}".to_string(), p.to_string()).await
+    let engine = core()?;
+    let _ = engine.api_cn.ensure_guest_or_user().await;
+    let resolved = crate::net::api_cn::resolve_numeric_status_id(&status_id);
+    let mut form = BTreeMap::new();
+    // Share APK (`C2186ae.java`) sends `ids` + `visible`.
+    form.insert("ids".to_string(), resolved.clone());
+    form.insert("visible".to_string(), visible.to_string());
+    match engine
+        .api_cn
+        .post_2("statuses/modify_visible", BTreeMap::new(), form)
+        .await
+    {
+        Ok(val) => serde_json::to_string(&val).map_err(|e| e.to_string()),
+        Err(mob_err) => {
+            if engine.clean_active_web_cookie().is_some() {
+                if let Ok(val) = engine
+                    .web_request(
+                        "POST",
+                        "https://weibo.com/ajax/statuses/modifyVisible",
+                        &[],
+                        Some(&[
+                            ("ids", resolved.clone()),
+                            ("visible", visible.to_string()),
+                        ]),
+                        &format!("https://weibo.com/detail/{resolved}"),
+                    )
+                    .await
+                {
+                    return serde_json::to_string(&val).map_err(|e| e.to_string());
+                }
+            }
+            Err(mob_err.to_string())
+        }
+    }
 }
 
-pub async fn status_modify(status_id: String, content: String, pic_id: Option<String>) -> Result<String, String> {
-    let mut obj = BTreeMap::new();
-    obj.insert("id".to_string(), Value::String(status_id));
-    obj.insert("status".to_string(), Value::String(content));
-    if let Some(pids) = pic_id.filter(|s| !s.is_empty()) {
-        obj.insert("pic_id".to_string(), Value::String(pids));
+pub async fn status_modify(
+    status_id: String,
+    content: String,
+    pic_id: Option<String>,
+    visible: Option<i32>,
+) -> Result<String, String> {
+    let engine = core()?;
+    let _ = engine.api_cn.ensure_guest_or_user().await;
+    let resolved = crate::net::api_cn::resolve_numeric_status_id(&status_id);
+    let vis = visible.unwrap_or(0).to_string();
+
+    // Share APK (`C2850hz.java` + `C5687oo0O0o0o.java`) calls `statuses/modify_weibo`
+    // via `@Multipart` with `mid`, `content`, `visible`, `luicode`, and optional `media`.
+    let mut fields = BTreeMap::new();
+    fields.insert("mid".to_string(), resolved.clone());
+    fields.insert("content".to_string(), content.clone());
+    fields.insert("visible".to_string(), vis.clone());
+    fields.insert("luicode".to_string(), "10000001".to_string());
+
+    let clean_pids: Vec<String> = pic_id
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    if !clean_pids.is_empty() {
+        let media: Vec<Value> = clean_pids
+            .iter()
+            .map(|pid| json!({"type": "image", "pid": pid}))
+            .collect();
+        fields.insert("media".to_string(), Value::Array(media).to_string());
     }
-    mobile_post(
-        "statuses/modify_weibo".to_string(),
-        "{}".to_string(),
-        Value::Object(obj.into_iter().collect()).to_string(),
-    )
-    .await
+
+    match engine
+        .api_cn
+        .post_multipart_2("statuses/modify_weibo", BTreeMap::new(), fields.clone())
+        .await
+    {
+        Ok(val) => serde_json::to_string(&val).map_err(|e| e.to_string()),
+        Err(mob_err) => {
+            if !clean_pids.is_empty() {
+                let mut alt_fields = fields;
+                alt_fields.remove("media");
+                alt_fields.insert("pic_id".to_string(), clean_pids.join(","));
+                if let Ok(val) = engine
+                    .api_cn
+                    .post_multipart_2("statuses/modify_weibo", BTreeMap::new(), alt_fields)
+                    .await
+                {
+                    return serde_json::to_string(&val).map_err(|e| e.to_string());
+                }
+            }
+            if engine.clean_active_web_cookie().is_some() {
+                let mut form = vec![
+                    ("id", resolved.clone()),
+                    ("content", content),
+                    ("visible", vis),
+                ];
+                let pid_csv = clean_pids.join(",");
+                if !pid_csv.is_empty() {
+                    form.push(("pic_id", pid_csv));
+                }
+                if let Ok(val) = engine
+                    .web_request(
+                        "POST",
+                        "https://weibo.com/ajax/statuses/edit",
+                        &[],
+                        Some(&form),
+                        &format!("https://weibo.com/detail/{resolved}"),
+                    )
+                    .await
+                {
+                    return serde_json::to_string(&val).map_err(|e| e.to_string());
+                }
+            }
+            Err(mob_err.to_string())
+        }
+    }
 }
 
 pub async fn comment_delete(cid: String, block_and_delete: bool) -> Result<String, String> {

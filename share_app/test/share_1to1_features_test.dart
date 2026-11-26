@@ -12,6 +12,7 @@ import 'package:share_app/core/groups.dart';
 import 'package:share_app/core/models.dart';
 import 'package:share_app/core/notice.dart';
 import 'package:share_app/core/offline_emoticons.dart';
+import 'package:share_app/core/session.dart';
 import 'package:share_app/core/settings.dart';
 import 'package:share_app/core/share_core.dart';
 import 'package:share_app/src/rust/api/share_api.dart';
@@ -19,7 +20,9 @@ import 'package:share_app/src/rust/frb_generated.dart';
 import 'package:share_app/ui/app_theme.dart';
 import 'package:share_app/ui/common/long_image_page.dart';
 import 'package:share_app/ui/common/share_actions.dart';
+import 'package:share_app/ui/common/status_action_sheet.dart';
 import 'package:share_app/ui/common/text_boom_dialog.dart';
+import 'package:share_app/ui/compose/compose_page.dart';
 import 'package:share_app/ui/detail/comment_floor_page.dart';
 import 'package:share_app/ui/detail/likers_list.dart';
 import 'package:share_app/ui/detail/repost_list_page.dart';
@@ -1516,5 +1519,173 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+
+  testWidgets('GalleryPage toggles 2.5x zoom on double tap and locks PageView paging while zoomed',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: GalleryPage(
+            pics: [
+              Pic(url: 'https://example.com/1.jpg'),
+              Pic(url: 'https://example.com/2.jpg'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final viewerFinder = find.byType(InteractiveViewer);
+    expect(viewerFinder, findsOneWidget);
+    final viewer = tester.widget<InteractiveViewer>(viewerFinder);
+    expect(viewer.transformationController!.value.getMaxScaleOnAxis(), closeTo(1.0, 0.01));
+
+    // Double-tap zooms in to 2.5x and disables PageView horizontal swiping.
+    final center = tester.getCenter(viewerFinder);
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(center);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(
+      viewer.transformationController!.value.getMaxScaleOnAxis(),
+      closeTo(2.5, 0.05),
+    );
+    final pageViewZoomed = tester.widget<PageView>(find.byType(PageView));
+    expect(pageViewZoomed.physics, isA<NeverScrollableScrollPhysics>());
+
+    // Double-tap again resets back to 1.0x and restores paging.
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(center);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(
+      viewer.transformationController!.value.getMaxScaleOnAxis(),
+      closeTo(1.0, 0.05),
+    );
+    final pageViewUnzoomed = tester.widget<PageView>(find.byType(PageView));
+    expect(pageViewUnzoomed.physics, isNull);
+  });
+
+  test('Pic.extractPid and Status.fromJson extract pid, isTop, and visible fields', () {
+    expect(
+      Pic.extractPid('https://wx1.sinaimg.cn/large/006ABCD1ly1hz9abc1234j30u0140n0u.jpg'),
+      '006ABCD1ly1hz9abc1234j30u0140n0u',
+    );
+    final status = Status.fromJson({
+      'idstr': '5123456789012345',
+      'mblogid': 'P123abc',
+      'text': '测试置顶微博',
+      'isTop': 1,
+      'visible': {'type': 2, 'list_id': 0},
+      'pic_infos': {
+        '006ABCD1ly1hz9abc1234j30u0140n0u': {
+          'large': {
+            'url': 'https://wx1.sinaimg.cn/large/006ABCD1ly1hz9abc1234j30u0140n0u.jpg',
+            'width': 1080,
+            'height': 1440,
+          },
+        },
+      },
+    });
+    expect(status.isTop, isTrue);
+    expect(status.visible, 2);
+    expect(status.pics.single.pid, '006ABCD1ly1hz9abc1234j30u0140n0u');
+  });
+
+  testWidgets('ComposePage editStatus shows full Share editor and StatusActionSheet opens it instead of dialog',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final sessionNotifier = SessionNotifier()
+      ..state = const SessionState(
+        account: SessionAccount(
+          uid: '10086',
+          screenName: '我',
+          avatar: '',
+          isGuest: false,
+          active: true,
+        ),
+      );
+    final status = Status(
+      id: '5123456789012345',
+      mblogid: 'P123abc',
+      createdAt: '',
+      textHtml: '原来的微博正文',
+      textRaw: '原来的微博正文 ...全文',
+      source: 'Share',
+      user: const User(id: '10086', name: '我', avatar: ''),
+      isTop: true,
+      visible: 2,
+      pics: const [
+        Pic(
+          url: 'https://wx1.sinaimg.cn/bmiddle/006ABCD1ly1hz9abc1234j30u0140n0u.jpg',
+          pid: '006ABCD1ly1hz9abc1234j30u0140n0u',
+        ),
+      ],
+      retweeted: const Status(
+        id: '5000000000000001',
+        mblogid: 'O123xyz',
+        createdAt: '',
+        textHtml: '被转发原博内容',
+        textRaw: '被转发原博内容',
+        source: '',
+        user: User(id: '999', name: '原作者', avatar: ''),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [sessionProvider.overrideWith((_) => sessionNotifier)],
+        child: MaterialApp(home: ComposePage(editStatus: status)),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('编辑微博'), findsOneWidget);
+    expect(find.text('保存'), findsOneWidget);
+    expect(find.text('存草稿'), findsNothing);
+    expect(find.text('原来的微博正文'), findsOneWidget);
+    expect(find.text('@原作者: 被转发原博内容'), findsOneWidget);
+    expect(find.text('好友圈'), findsOneWidget);
+
+    // Author action sheet shows cancel-pin label when isTop=true and launches ComposePage on '编辑微博'.
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [sessionProvider.overrideWith((_) => sessionNotifier)],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (ctx, ref, _) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () => showStatusActionSheet(ctx, ref, status),
+                child: const Text('OpenMenu'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('OpenMenu'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('取消个人主页置顶'), findsOneWidget);
+    await tester.ensureVisible(find.text('编辑微博'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑微博'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.byType(ComposePage), findsOneWidget);
+    expect(find.text('保存'), findsOneWidget);
   });
 }
