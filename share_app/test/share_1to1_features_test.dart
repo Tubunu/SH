@@ -1790,6 +1790,46 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('SecondaryPage'), findsNothing);
 
+      // Step-by-step interactive drag on iOS must slide smoothly without twitching back to 0.
+      await tester.tap(find.text('PushSecondary'));
+      await tester.pumpAndSettle();
+      final baseLeft = tester.getTopLeft(find.text('SecondaryPage')).dx;
+      final gesture = await tester.startGesture(const Offset(195, 422));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(45, 0));
+      await tester.pump();
+      final dx1 = tester.getTopLeft(find.text('SecondaryPage')).dx;
+      expect(dx1, greaterThan(baseLeft + 25));
+
+      await gesture.moveBy(const Offset(45, 0));
+      await tester.pump();
+      final dx2 = tester.getTopLeft(find.text('SecondaryPage')).dx;
+      expect(dx2, greaterThan(dx1 + 25));
+
+      await gesture.moveBy(const Offset(45, 0));
+      await tester.pump();
+      final dx3 = tester.getTopLeft(find.text('SecondaryPage')).dx;
+      expect(dx3, greaterThan(dx2 + 25));
+
+      // Moving finger slightly left must glide smoothly left without restarting or jittering.
+      await gesture.moveBy(const Offset(-30, 0));
+      await tester.pump();
+      final dx4 = tester.getTopLeft(find.text('SecondaryPage')).dx;
+      expect(dx4, lessThan(dx3));
+      expect(dx4, greaterThan(dx1));
+
+      await gesture.moveBy(const Offset(60, 0));
+      await tester.pump();
+      final dx5 = tester.getTopLeft(find.text('SecondaryPage')).dx;
+      expect(dx5, greaterThan(dx4 + 30));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('SecondaryPage'), findsNothing);
+      expect(find.text('PushSecondary'), findsOneWidget);
+
       // 2. Respect swipe_back modes: 1 (right only), 2 (left only), 4 (disabled).
       final notifier =
           await pumpNavHost(platform: TargetPlatform.android, swipeBackMode: 1);

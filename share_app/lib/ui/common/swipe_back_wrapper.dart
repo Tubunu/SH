@@ -169,8 +169,10 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
 
   final _SwipeBackRegistry _registry = _SwipeBackRegistry();
 
+  double _dragStartGlobalX = 0.0;
   double _dragDelta = 0.0;
   int _dragDirection = 0; // 1 = right swipe, -1 = left swipe, 0 = none
+  bool _canInteractiveSession = false;
   bool _interactiveBackActive = false;
   NavigatorState? _gestureNavigator;
 
@@ -225,9 +227,13 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
   }
 
   void _handleDragStart(DragStartDetails details) {
+    _dragStartGlobalX = details.globalPosition.dx;
     _dragDelta = 0.0;
     _dragDirection = 0;
     _interactiveBackActive = false;
+    _canInteractiveSession = _isCupertinoPlatform &&
+        widget.route.popGestureEnabled &&
+        _allowsRight(_resolveMode());
     _pillOffset = 0.0;
     _pillDirection = 0;
   }
@@ -238,13 +244,25 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
       return;
     }
 
-    _dragDelta += details.delta.dx;
+    final rawDx = details.globalPosition.dx - _dragStartGlobalX;
+
+    // 已经进入 iOS 交互式右滑跟手返回阶段后，锁定在交互会话内按全局坐标更新进度，
+    // 禁止每帧重查 popGestureEnabled（否则 animation.isCompleted 变 false 会触发反复取消与抽动）。
+    if (_interactiveBackActive) {
+      _dragDelta = math.max(0.0, rawDx);
+      _dragDirection = 1;
+      final width = math.max(MediaQuery.sizeOf(context).width, 200.0);
+      final progress = (1.0 - (_dragDelta / width)).clamp(0.0, 1.0);
+      widget.route.handleUpdateBackGestureProgress(progress: progress);
+      return;
+    }
+
+    _dragDelta = rawDx;
     if (_dragDelta == 0) return;
 
     final dir = _dragDelta > 0 ? 1 : -1;
     _dragDirection = dir;
     if (!_allowsDirection(dir)) {
-      _cancelInteractiveBackIfNeeded();
       if (_pillOffset != 0.0) {
         setState(() {
           _pillOffset = 0.0;
@@ -254,23 +272,18 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
       return;
     }
 
-    final canInteractiveCupertino =
-        _isCupertinoPlatform && dir > 0 && widget.route.popGestureEnabled;
-    if (canInteractiveCupertino) {
-      if (!_interactiveBackActive) {
-        _pillOffset = 0.0;
-        _pillDirection = 0;
-        _gestureNavigator = Navigator.maybeOf(context);
-        widget.route.handleStartBackGesture(progress: 1.0);
-        _interactiveBackActive = true;
-      }
+    if (_canInteractiveSession && dir > 0) {
+      _pillOffset = 0.0;
+      _pillDirection = 0;
+      _gestureNavigator = Navigator.maybeOf(context);
+      widget.route.handleStartBackGesture(progress: 1.0);
+      _interactiveBackActive = true;
       final width = math.max(MediaQuery.sizeOf(context).width, 200.0);
       final progress = (1.0 - (_dragDelta / width)).clamp(0.0, 1.0);
       widget.route.handleUpdateBackGestureProgress(progress: progress);
       return;
     }
 
-    _cancelInteractiveBackIfNeeded();
     setState(() {
       _pillDirection = dir;
       _pillOffset = _dragDelta.abs();
@@ -283,6 +296,7 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
     final vx = details.velocity.pixelsPerSecond.dx;
     _dragDelta = 0.0;
     _dragDirection = 0;
+    _canInteractiveSession = false;
 
     if (!mounted || _registry.isSuppressed || dir == 0 || !_allowsDirection(dir)) {
       _cancelActiveGesture();
@@ -316,6 +330,7 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
   void _handleDragCancel() {
     _dragDelta = 0.0;
     _dragDirection = 0;
+    _canInteractiveSession = false;
     _cancelActiveGesture();
   }
 
@@ -347,7 +362,8 @@ class _MidScreenSwipeBackHostState<T> extends State<_MidScreenSwipeBackHost<T>> 
       widget.route.handleCancelBackGesture();
       return;
     }
-    if (!widget.route.popGestureEnabled) {
+    if (widget.route.willHandlePopInternally ||
+        widget.route.popDisposition == RoutePopDisposition.doNotPop) {
       widget.route.handleCancelBackGesture();
       nav.maybePop();
       return;
