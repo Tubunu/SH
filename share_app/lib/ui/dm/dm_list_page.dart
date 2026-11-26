@@ -97,6 +97,7 @@ class _DmListPageState extends ConsumerState<DmListPage> {
           uid: conversation.uid,
           peerName: conversation.name,
           peerAvatar: conversation.avatar,
+          isGroup: conversation.isGroup,
         ),
       ),
     );
@@ -193,12 +194,18 @@ class _DmListPageState extends ConsumerState<DmListPage> {
                             cacheWidth: 140,
                             errorBuilder: (_, _, _) => ColoredBox(
                               color: ShareColors.placeholder,
-                              child: Icon(Icons.person, color: ShareColors.textHint),
+                              child: Icon(
+                                item.isGroup ? Icons.group : Icons.person,
+                                color: ShareColors.textHint,
+                              ),
                             ),
                           )
                         : ColoredBox(
                             color: ShareColors.placeholder,
-                            child: Icon(Icons.person, color: ShareColors.textHint),
+                            child: Icon(
+                              item.isGroup ? Icons.group : Icons.person,
+                              color: ShareColors.textHint,
+                            ),
                           ),
                   ),
                 ),
@@ -209,6 +216,25 @@ class _DmListPageState extends ConsumerState<DmListPage> {
                     children: [
                       Row(
                         children: [
+                          if (item.isGroup) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 1),
+                              margin: const EdgeInsets.only(right: 5),
+                              decoration: BoxDecoration(
+                                color: ShareColors.accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Text(
+                                '群',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: ShareColors.accent,
+                                ),
+                              ),
+                            ),
+                          ],
                           Expanded(
                             child: Text(
                               item.name.isEmpty ? item.uid : item.name,

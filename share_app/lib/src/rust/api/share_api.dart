@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `active_session_has_gsid`, `active_uid`, `active_user`, `any_non_empty_array`, `apply_blacklist_to_response`, `apply_user_to_session`, `blacklist_to_dto`, `clean_active_web_cookie`, `clean_and_sort_chronological_statuses`, `comments_empty`, `core`, `draft_to_dto`, `ensure_visitor_web_client`, `extract_cookie_pair`, `extract_flat_cookie`, `extract_mblogs_from_cardlist`, `extract_users_from_cardlist`, `filter_value_with_uid`, `get_kv`, `is_promoted_status`, `is_status_blocked`, `likers_empty`, `migrate_legacy_session_if_present`, `non_empty`, `now_millis`, `open`, `parse_string_map`, `persist_guest_snapshot`, `reposts_empty`, `restore_session_into_client`, `save_login_json_to_db`, `set_kv`, `status_numeric_id`, `statuses_empty`, `user_to_summary`, `web_ajax_get_or_visitor`, `web_ajax_get`, `web_ajax_post`, `web_request`
+// These functions are ignored because they are not marked as `pub`: `active_session_has_gsid`, `active_uid`, `active_user`, `any_non_empty_array`, `apply_blacklist_to_response`, `apply_user_to_session`, `blacklist_to_dto`, `clean_active_web_cookie`, `clean_and_sort_chronological_statuses`, `comments_empty`, `core`, `dm_json_failure`, `dm_messages_len`, `draft_to_dto`, `ensure_visitor_web_client`, `extract_cookie_pair`, `extract_flat_cookie`, `extract_mblogs_from_cardlist`, `extract_users_from_cardlist`, `filter_value_with_uid`, `get_kv`, `is_promoted_status`, `is_status_blocked`, `likers_empty`, `migrate_legacy_session_if_present`, `non_empty`, `now_millis`, `open`, `parse_string_map`, `persist_guest_snapshot`, `reposts_empty`, `restore_session_into_client`, `save_login_json_to_db`, `set_kv`, `status_numeric_id`, `statuses_empty`, `user_to_summary`, `web_ajax_get_or_visitor`, `web_ajax_get`, `web_ajax_post`, `web_request`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `CoreEngine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -258,14 +258,23 @@ Future<String> dmHistoryDual({
   required String uid,
   String? maxId,
   required int count,
+  required bool isGroup,
 }) => RustLib.instance.api.crateApiShareApiDmHistoryDual(
   uid: uid,
   maxId: maxId,
   count: count,
+  isGroup: isGroup,
 );
 
-Future<String> dmSendDual({required String uid, required String text}) =>
-    RustLib.instance.api.crateApiShareApiDmSendDual(uid: uid, text: text);
+Future<String> dmSendDual({
+  required String uid,
+  required String text,
+  required bool isGroup,
+}) => RustLib.instance.api.crateApiShareApiDmSendDual(
+  uid: uid,
+  text: text,
+  isGroup: isGroup,
+);
 
 Future<String> statusShowDual({required String id}) =>
     RustLib.instance.api.crateApiShareApiStatusShowDual(id: id);

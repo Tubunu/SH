@@ -57,12 +57,14 @@ class ShareDrawer extends ConsumerWidget {
         if (!settings.drawerMenuOrder.contains(k)) k,
     ].where((k) => !settings.drawerHiddenKeys.contains(k)).toList();
 
+    final fromLeft = settings.showDrawerFromLeft;
     return Drawer(
       width: width,
       backgroundColor: ShareColors.cardBg,
       shape: const RoundedRectangleBorder(),
       child: SafeArea(
-        right: false,
+        left: fromLeft,
+        right: !fromLeft,
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -72,7 +74,7 @@ class ShareDrawer extends ConsumerWidget {
             for (final key in orderedKeys) _buildMenuItem(context, ref, key),
             Divider(height: 12, thickness: 6, color: ShareColors.pageBg),
             _nightSwitch(context, ref, settings, isDark),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
           ],
         ),
       ),
@@ -472,7 +474,10 @@ class ShareDrawer extends ConsumerWidget {
     bool isDark,
   ) {
     return InkWell(
-      onTap: () => ref.read(settingsProvider.notifier).toggleThemeDark(!isDark),
+      onTap: () => ref.read(settingsProvider.notifier).toggleThemeDark(
+            !isDark,
+            platformBrightness: MediaQuery.platformBrightnessOf(context),
+          ),
       child: SizedBox(
         height: 46,
         child: Row(
@@ -492,7 +497,10 @@ class ShareDrawer extends ConsumerWidget {
             Switch(
               value: isDark,
               activeThumbColor: ShareColors.accent,
-              onChanged: (v) => ref.read(settingsProvider.notifier).toggleThemeDark(v),
+              onChanged: (v) => ref.read(settingsProvider.notifier).toggleThemeDark(
+                    v,
+                    platformBrightness: MediaQuery.platformBrightnessOf(context),
+                  ),
             ),
             const SizedBox(width: 8),
           ],

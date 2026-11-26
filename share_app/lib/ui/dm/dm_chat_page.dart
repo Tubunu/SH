@@ -6,22 +6,24 @@ import '../../core/settings.dart';
 import '../../core/dm.dart';
 import '../../core/session.dart';
 import '../app_theme.dart';
+import '../common/in_app_web_page.dart';
 
-/// 私信对话 — the original `DirectMessageChatActivity`.
+/// 私信 / 群聊对话 — the original `DirectMessageChatActivity`.
 ///
-/// History and sending both go through the WebIM API. Any server refusal
-/// (`Auth failed, Cookie expires or invalid.`, risk control, ...) is shown
-/// verbatim at the top of the empty state instead of being swallowed.
+/// 1-on-1 DMs and joined group chats route through dual transport (mobile API
+/// + WebIM groupchat). Any server refusal is shown verbatim instead of empty.
 class DmChatPage extends ConsumerStatefulWidget {
   final String uid;
   final String peerName;
   final String peerAvatar;
+  final bool isGroup;
 
   const DmChatPage({
     super.key,
     required this.uid,
     required this.peerName,
     required this.peerAvatar,
+    this.isGroup = false,
   });
 
   @override
@@ -62,7 +64,11 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
       _error = null;
     });
     try {
-      final history = await WeiboApi.instance.dmHistory(widget.uid, myUid: _myUid);
+      final history = await WeiboApi.instance.dmHistory(
+        widget.uid,
+        myUid: _myUid,
+        isGroup: widget.isGroup,
+      );
       if (!mounted) return;
       setState(() {
         _messages
@@ -90,6 +96,7 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
         widget.uid,
         myUid: _myUid,
         maxId: oldest,
+        isGroup: widget.isGroup,
       );
       if (!mounted) return;
       final known = _messages.map((m) => m.id).toSet();
@@ -129,7 +136,12 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
     _jumpToBottom();
 
     try {
-      final sent = await WeiboApi.instance.dmSend(widget.uid, text, myUid: _myUid);
+      final sent = await WeiboApi.instance.dmSend(
+        widget.uid,
+        text,
+        myUid: _myUid,
+        isGroup: widget.isGroup,
+      );
       if (!mounted) return;
       setState(() {
         final index = _messages.indexWhere((m) => m.id == optimistic.id);
@@ -141,6 +153,7 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
             timeMs: sent.timeMs == 0 ? optimistic.timeMs : sent.timeMs,
             senderId: sent.senderId,
             senderName: sent.senderName,
+            senderAvatar: sent.senderAvatar,
             fromMe: true,
           );
         }
@@ -196,27 +209,62 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
                         widget.peerAvatar,
                         fit: BoxFit.cover,
                         cacheWidth: 90,
-                        errorBuilder: (_, _, _) => ColoredBox(
+                    errorBuilder: (_, _, _) => ColoredBox(
                           color: ShareColors.placeholder,
-                          child: Icon(Icons.person, size: 15, color: ShareColors.textHint),
+                          child: Icon(
+                            widget.isGroup ? Icons.group : Icons.person,
+                            size: 15,
+                            color: ShareColors.textHint,
+                          ),
                         ),
                       )
                     : ColoredBox(
                         color: ShareColors.placeholder,
-                        child: Icon(Icons.person, size: 15, color: ShareColors.textHint),
+                        child: Icon(
+                          widget.isGroup ? Icons.group : Icons.person,
+                          size: 15,
+                          color: ShareColors.textHint,
+                        ),
                       ),
               ),
             ),
             const SizedBox(width: 8),
+            if (widget.isGroup) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: ShareColors.accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  '群',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: ShareColors.accent,
+                  ),
+                ),
+              ),
+            ],
             Flexible(
               child: Text(
-                widget.peerName.isEmpty ? '私信' : widget.peerName,
+                widget.peerName.isEmpty
+                    ? (widget.isGroup ? '群聊' : '私信')
+                    : widget.peerName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            tooltip: '刷新消息',
+            onPressed: _load,
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -234,49 +282,104 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
       );
     }
     if (_error != null) {
-      return ListView(
-        children: [
-          const SizedBox(height: 80),
-          Icon(Icons.cloud_off, size: 42, color: ShareColors.textHint),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13.5, color: ShareColors.textSecondary, height: 1.5),
+      return RefreshIndicator(
+        color: ShareColors.accent,
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            const SizedBox(height: 80),
+            Icon(Icons.cloud_off, size: 42, color: ShareColors.textHint),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13.5, color: ShareColors.textSecondary, height: 1.5),
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          Center(child: TextButton(onPressed: _load, child: const Text('重试'))),
-        ],
+            const SizedBox(height: 12),
+            Center(child: TextButton(onPressed: _load, child: const Text('重试'))),
+            Center(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const InAppWebPage(
+                      url: 'https://api.weibo.com/chat',
+                      title: '私信',
+                    ),
+                  ),
+                ),
+                child: const Text('在网页版私信中打开'),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
-    return ListView.builder(
-      controller: _scroll,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      itemCount: _messages.length + (_hasMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (_hasMore && index == 0) {
-          return Center(
-            child: TextButton(
-              onPressed: _loadingMore ? null : _loadMore,
+    if (_messages.isEmpty) {
+      return RefreshIndicator(
+        color: ShareColors.accent,
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            const SizedBox(height: 100),
+            Icon(
+              widget.isGroup ? Icons.forum_outlined : Icons.chat_bubble_outline,
+              size: 42,
+              color: ShareColors.textHint,
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
-                _loadingMore ? '加载中…' : '查看更早的消息',
-                style: TextStyle(fontSize: 12, color: ShareColors.textSecondary),
+                widget.isGroup
+                    ? '暂无群聊消息，下拉可刷新。\n若该群消息未同步，可在网页版私信查看。'
+                    : '暂无消息，下拉可刷新。',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13.5, color: ShareColors.textSecondary, height: 1.5),
               ),
             ),
-          );
-        }
-        final message = _messages[index - (_hasMore ? 1 : 0)];
-        return _bubble(message);
-      },
+            const SizedBox(height: 12),
+            Center(child: TextButton(onPressed: _load, child: const Text('刷新'))),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      color: ShareColors.accent,
+      onRefresh: _load,
+      child: ListView.builder(
+        controller: _scroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        itemCount: _messages.length + (_hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (_hasMore && index == 0) {
+            return Center(
+              child: TextButton(
+                onPressed: _loadingMore ? null : _loadMore,
+                child: Text(
+                  _loadingMore ? '加载中…' : '查看更早的消息',
+                  style: TextStyle(fontSize: 12, color: ShareColors.textSecondary),
+                ),
+              ),
+            );
+          }
+          final message = _messages[index - (_hasMore ? 1 : 0)];
+          return _bubble(message);
+        },
+      ),
     );
   }
 
   Widget _bubble(DmMessage message) {
     final mine = message.fromMe;
+    final avatarUrl = widget.isGroup ? message.senderAvatar : widget.peerAvatar;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
@@ -289,9 +392,9 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
               child: SizedBox(
                 width: 32,
                 height: 32,
-                child: widget.peerAvatar.isNotEmpty
+                child: avatarUrl.isNotEmpty
                     ? Image.network(
-                        widget.peerAvatar,
+                        avatarUrl,
                         fit: BoxFit.cover,
                         cacheWidth: 100,
                         errorBuilder: (_, _, _) => ColoredBox(
@@ -308,41 +411,61 @@ class _DmChatPageState extends ConsumerState<DmChatPage> {
             const SizedBox(width: 8),
           ],
           Flexible(
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.sizeOf(context).width * 0.68,
-              ),
-              padding: const EdgeInsets.fromLTRB(11, 8, 11, 8),
-              decoration: BoxDecoration(
-                color: mine ? ShareColors.accent : ShareColors.cardBg,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(6),
-                  topRight: const Radius.circular(6),
-                  bottomLeft: Radius.circular(mine ? 6 : 2),
-                  bottomRight: Radius.circular(mine ? 2 : 6),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    message.text,
-                    style: TextStyle(
-                      fontSize: 15,
-                      height: 1.35,
-                      color: mine ? Colors.white : ShareColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    formatDmClock(message.timeMs),
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: mine ? Colors.white70 : ShareColors.textHint,
+            child: Column(
+              crossAxisAlignment:
+                  mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                if (widget.isGroup && !mine && message.senderName.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2, bottom: 3),
+                    child: Text(
+                      message.senderName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: ShareColors.textSecondary,
+                      ),
                     ),
                   ),
                 ],
-              ),
+                Container(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * 0.68,
+                  ),
+                  padding: const EdgeInsets.fromLTRB(11, 8, 11, 8),
+                  decoration: BoxDecoration(
+                    color: mine ? ShareColors.accent : ShareColors.cardBg,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(6),
+                      topRight: const Radius.circular(6),
+                      bottomLeft: Radius.circular(mine ? 6 : 2),
+                      bottomRight: Radius.circular(mine ? 2 : 6),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        message.text,
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.35,
+                          color: mine ? Colors.white : ShareColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        formatDmClock(message.timeMs),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: mine ? Colors.white70 : ShareColors.textHint,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
           if (mine) const SizedBox(width: 4),

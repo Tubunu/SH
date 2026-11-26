@@ -1134,6 +1134,74 @@ impl ApiCnClient {
         self.post_2("direct_messages/create", BTreeMap::new(), form).await
     }
 
+    pub async fn dm_group_messages(
+        &self,
+        gid: &str,
+        max_id: Option<&str>,
+        count: u32,
+    ) -> Result<Value, ApiCnError> {
+        let mut p = BTreeMap::new();
+        p.insert("id".to_string(), gid.to_string());
+        p.insert("count".to_string(), count.clamp(1, 50).to_string());
+        p.insert("convert_emoji".to_string(), "1".to_string());
+        p.insert("query_sender".to_string(), "1".to_string());
+        p.insert("source".to_string(), SPOOF_APP_KEY.to_string());
+        if let Some(m) = max_id.filter(|s| !s.is_empty()) {
+            p.insert("max_mid".to_string(), m.to_string());
+        }
+        match self.get_2("groupchat/query_messages", p.clone()).await {
+            Ok(v) => Ok(v),
+            Err(first_err) => {
+                let mut params = self.session().common_params(true);
+                for (k, v) in p {
+                    params.insert(k, v);
+                }
+                self.execute_signed(
+                    "GET",
+                    "https://api.weibo.com/webim/groupchat/query_messages.json",
+                    params,
+                    None,
+                    true,
+                    true,
+                )
+                .await
+                .map_err(|_| first_err)
+            }
+        }
+    }
+
+    pub async fn dm_group_send(&self, gid: &str, text: &str) -> Result<Value, ApiCnError> {
+        let mut form_extra = BTreeMap::new();
+        form_extra.insert("id".to_string(), gid.to_string());
+        form_extra.insert("content".to_string(), text.to_string());
+        form_extra.insert("return_detail".to_string(), "1".to_string());
+        form_extra.insert("source".to_string(), SPOOF_APP_KEY.to_string());
+
+        let snap = self.session();
+        let query = snap.common_params(true);
+        let mut form = snap.common_params(true);
+        for (k, v) in &form_extra {
+            form.insert(k.clone(), v.clone());
+        }
+        match self
+            .execute_signed(
+                "POST",
+                "https://api.weibo.com/webim/groupchat/send_message.json",
+                query,
+                Some(form),
+                true,
+                true,
+            )
+            .await
+        {
+            Ok(v) => Ok(v),
+            Err(first_err) => self
+                .post_2("groupchat/send_message", BTreeMap::new(), form_extra)
+                .await
+                .map_err(|_| first_err),
+        }
+    }
+
     pub async fn repost_timeline(&self, status_id: &str, page: u32, count: u32) -> Result<Value, ApiCnError> {
         let resolved = resolve_numeric_status_id(status_id);
         let mut p = page_params(None, None, count, page);

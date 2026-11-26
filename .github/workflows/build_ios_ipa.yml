@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       build_name:
-        description: "CFBundleShortVersionString (e.g. 1.5.0)"
+        description: "CFBundleShortVersionString (e.g. 1.5.1)"
         required: false
-        default: "1.5.0"
+        default: "1.5.1"
       build_number:
-        description: "CFBundleVersion (e.g. 15)"
+        description: "CFBundleVersion (e.g. 16)"
         required: false
-        default: "15"
+        default: "16"
   push:
     branches:
       - main

@@ -25,7 +25,10 @@ class FeedPage extends ConsumerStatefulWidget {
   /// 抽屉里点「首页 / 热门 / 消息」时由外壳切 tab。
   final void Function(int index)? onSelectTab;
 
-  const FeedPage({super.key, this.onSelectTab});
+  /// 外壳提供宿主抽屉回调，避免被底部导航栏遮挡。
+  final VoidCallback? onOpenDrawer;
+
+  const FeedPage({super.key, this.onSelectTab, this.onOpenDrawer});
 
   @override
   ConsumerState<FeedPage> createState() => FeedPageState();
@@ -397,6 +400,10 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
   }
 
   void openDrawer() {
+    if (widget.onOpenDrawer != null) {
+      widget.onOpenDrawer!();
+      return;
+    }
     if (ref.read(settingsProvider).showDrawerFromLeft) {
       _scaffoldKey.currentState?.openDrawer();
     } else {
@@ -584,7 +591,9 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
       }
     });
     final fromLeft = ref.watch(settingsProvider).showDrawerFromLeft;
-    final drawer = ShareDrawer(onSelectTab: widget.onSelectTab ?? (_) {});
+    final drawer = widget.onOpenDrawer == null
+        ? ShareDrawer(onSelectTab: widget.onSelectTab ?? (_) {})
+        : null;
     return Scaffold(
       key: _scaffoldKey,
       drawer: fromLeft ? drawer : null,

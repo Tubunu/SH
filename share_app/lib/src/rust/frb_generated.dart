@@ -221,6 +221,7 @@ abstract class RustLibApi extends BaseApi {
     required String uid,
     String? maxId,
     required int count,
+    required bool isGroup,
   });
 
   Future<String> crateApiWebApiDmSend({
@@ -231,6 +232,7 @@ abstract class RustLibApi extends BaseApi {
   Future<String> crateApiShareApiDmSendDual({
     required String uid,
     required String text,
+    required bool isGroup,
   });
 
   Future<BigInt> crateApiShareApiDraftClear({required String uid});
@@ -1825,6 +1827,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String uid,
     String? maxId,
     required int count,
+    required bool isGroup,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1833,6 +1836,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(uid, serializer);
           sse_encode_opt_String(maxId, serializer);
           sse_encode_u_32(count, serializer);
+          sse_encode_bool(isGroup, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1845,7 +1849,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiShareApiDmHistoryDualConstMeta,
-        argValues: [uid, maxId, count],
+        argValues: [uid, maxId, count, isGroup],
         apiImpl: this,
       ),
     );
@@ -1854,7 +1858,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiShareApiDmHistoryDualConstMeta =>
       const TaskConstMeta(
         debugName: "dm_history_dual",
-        argNames: ["uid", "maxId", "count"],
+        argNames: ["uid", "maxId", "count", "isGroup"],
       );
 
   @override
@@ -1893,6 +1897,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<String> crateApiShareApiDmSendDual({
     required String uid,
     required String text,
+    required bool isGroup,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1900,6 +1905,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(uid, serializer);
           sse_encode_String(text, serializer);
+          sse_encode_bool(isGroup, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1912,14 +1918,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiShareApiDmSendDualConstMeta,
-        argValues: [uid, text],
+        argValues: [uid, text, isGroup],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiShareApiDmSendDualConstMeta =>
-      const TaskConstMeta(debugName: "dm_send_dual", argNames: ["uid", "text"]);
+  TaskConstMeta get kCrateApiShareApiDmSendDualConstMeta => const TaskConstMeta(
+    debugName: "dm_send_dual",
+    argNames: ["uid", "text", "isGroup"],
+  );
 
   @override
   Future<BigInt> crateApiShareApiDraftClear({required String uid}) {

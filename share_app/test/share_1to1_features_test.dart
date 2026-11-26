@@ -32,6 +32,7 @@ import 'package:share_app/ui/profile/user_page.dart';
 import 'package:share_app/ui/search/search_page.dart';
 import 'package:share_app/ui/settings/about_page.dart';
 import 'package:share_app/ui/shell/main_shell.dart';
+import 'package:share_app/ui/shell/share_drawer.dart';
 import 'package:share_app/ui/theme/theme_page.dart';
 import 'package:share_app/ui/widgets/pic_grid.dart';
 import 'package:share_app/ui/widgets/qr_code_box.dart';
@@ -1248,5 +1249,272 @@ void main() {
     expect(find.text('原创'), findsOneWidget);
     expect(find.text('图片'), findsOneWidget);
     expect(find.text('视频'), findsOneWidget);
+  });
+
+  testWidgets('Manual white mode override persists across active night window and resets next night',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final notifier = SettingsNotifier(
+      const AppSettings(
+        themeKey: 'white',
+        prefs: {
+          'auto_night_mode': true,
+          'auto_night_mode_duration': '22:00-07:00',
+          'night_theme': 3,
+        },
+      ),
+    );
+    final tonight = DateTime(2026, 11, 26, 23, 30);
+    final pastMidnightSameCycle = DateTime(2026, 11, 27, 2, 0);
+    final nextNight = DateTime(2026, 11, 27, 22, 30);
+
+    expect(notifier.state.effectivePreset(Brightness.light, tonight).dark, isTrue);
+
+    notifier.toggleThemeDark(
+      false,
+      platformBrightness: Brightness.light,
+      now: tonight,
+    );
+    expect(notifier.state.effectivePreset(Brightness.light, tonight).key, 'white');
+    expect(
+      notifier.state.effectivePreset(Brightness.light, pastMidnightSameCycle).key,
+      'white',
+    );
+    expect(notifier.state.effectivePreset(Brightness.light, nextNight).dark, isTrue);
+
+    // UI switch inside ShareDrawer with all-day active auto_night_mode window.
+    final drawerNotifier = SettingsNotifier(
+      const AppSettings(
+        themeKey: 'white',
+        prefs: {
+          'auto_night_mode': true,
+          'auto_night_mode_duration': '00:00-23:59',
+          'night_theme': 3,
+        },
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [settingsProvider.overrideWith((_) => drawerNotifier)],
+        child: MaterialApp(
+          home: Scaffold(body: ShareDrawer(onSelectTab: (_) {})),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.byType(Switch),
+      150,
+      scrollable: find.descendant(
+        of: find.byType(ShareDrawer),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('日间模式'), findsOneWidget);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pump();
+    expect(drawerNotifier.state.effectivePreset(Brightness.light).key, 'white');
+    expect(find.text('夜间模式'), findsOneWidget);
+
+    // Follow system dark override also respects manual white toggle until re-enabled.
+    final sysNotifier = SettingsNotifier(
+      const AppSettings(
+        themeKey: 'white',
+        followSystemDark: true,
+        prefs: {'auto_night_mode_follow_system': true, 'night_theme': 3},
+      ),
+    );
+    expect(sysNotifier.state.effectivePreset(Brightness.dark).dark, isTrue);
+    sysNotifier.toggleThemeDark(false, platformBrightness: Brightness.dark);
+    expect(sysNotifier.state.effectivePreset(Brightness.dark).key, 'white');
+  });
+
+  testWidgets('MainShell mounts ShareDrawer above BottomAppBar and opening drawer prevents bottom bar flicker',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.padding = const FakeViewPadding(top: 47, bottom: 34);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+
+    final notifier = SettingsNotifier(
+      const AppSettings(
+        themeKey: 'white',
+        prefs: {
+          'navigation_hide_on_scroll': true,
+          'navigation_position': 2,
+          'fab_options': 1,
+          'auto_night_mode': true,
+          'auto_night_mode_duration': '00:00-23:59',
+          'night_theme': 3,
+        },
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [settingsProvider.overrideWith((_) => notifier)],
+        child: const MaterialApp(home: MainShell()),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(BottomAppBar), findsOneWidget);
+    // Open drawer by tapping avatar button on FeedPage.
+    await tester.tap(find.byType(ClipOval).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.byType(ShareDrawer), findsOneWidget);
+    expect(
+      find.ancestor(of: find.byType(ShareDrawer), matching: find.byType(FeedPage)),
+      findsNothing,
+    );
+    expect(
+      find.ancestor(of: find.byType(ShareDrawer), matching: find.byType(MainShell)),
+      findsOneWidget,
+    );
+
+    // Scroll drawer if needed, and verify night-mode switch is unobstructed & hit-testable above BottomAppBar.
+    final drawerScroll = find.descendant(
+      of: find.byType(ShareDrawer),
+      matching: find.byType(Scrollable),
+    );
+    final nightSwitchFinder = find.descendant(
+      of: find.byType(ShareDrawer),
+      matching: find.byType(Switch),
+    );
+    await tester.scrollUntilVisible(
+      nightSwitchFinder,
+      150,
+      scrollable: drawerScroll,
+    );
+    await tester.pump();
+    expect(find.text('日间模式'), findsOneWidget);
+    await tester.tap(nightSwitchFinder);
+    await tester.pump();
+    expect(find.text('夜间模式'), findsOneWidget);
+
+    // Scrolling inside the open drawer must not hide or flicker BottomAppBar.
+    final drawerList = find.descendant(
+      of: find.byType(ShareDrawer),
+      matching: find.byType(ListView),
+    );
+    await tester.drag(drawerList, const Offset(0, -120));
+    await tester.pump();
+    expect(find.byType(BottomAppBar), findsOneWidget);
+  });
+
+  test('DmConversation and DmHistory parse joined group chats and groupchat WebIM messages', () {
+    final convRaw = jsonEncode({
+      'user_list': [
+        {
+          'user': {
+            'id': 99887766,
+            'type': '3',
+            'screen_name': 'Flutter交流群',
+            'round_avatar_large': 'https://example.com/g.jpg',
+            'member_count': 42,
+          },
+          'direct_message': {
+            'id': 501,
+            'text': '最新群消息',
+            'created_at': 1700000100,
+          },
+          'unread_count': 3,
+        },
+        {
+          'user': {
+            'id': 12345,
+            'type': '1',
+            'screen_name': '好友小王',
+            'avatar_large': 'https://example.com/u.jpg',
+          },
+          'direct_message': {
+            'id': 502,
+            'text': '私聊',
+            'created_at': 1700000050,
+          },
+        },
+      ],
+    });
+    final convs = DmConversation.parseList(convRaw);
+    expect(convs.length, 2);
+    expect(convs.first.uid, '99887766');
+    expect(convs.first.isGroup, isTrue);
+    expect(convs.first.avatar, 'https://example.com/g.jpg');
+    expect(convs.last.uid, '12345');
+    expect(convs.last.isGroup, isFalse);
+
+    final webimGroupConvRaw = jsonEncode({
+      'conversations': [
+        {
+          'type': 2,
+          'gid': '77665544',
+          'user': {'name': '设计群'},
+          'last_message': {'id': 601, 'content': '早安', 'time': 1700000200},
+        },
+      ],
+    });
+    final webimConvs = DmConversation.parseList(webimGroupConvRaw);
+    expect(webimConvs.single.uid, '77665544');
+    expect(webimConvs.single.isGroup, isTrue);
+
+    final groupMsgRaw = jsonEncode({
+      'result': true,
+      'messages': [
+        {
+          'msgid': '1002',
+          'content': '我自己发的消息',
+          'time': 1700000020,
+          'from_uid': '10001',
+          'from_user': {'id': 10001, 'screen_name': '我自己'},
+        },
+        {
+          'msgid': '1001',
+          'content': '大家好',
+          'time': 1700000010,
+          'from_uid': '2002',
+          'from_user': {
+            'id': 2002,
+            'screen_name': '群友A',
+            'avatar_large': 'https://example.com/a.jpg',
+          },
+        },
+      ],
+    });
+    final history = DmHistory.parse(groupMsgRaw, myUid: '10001', count: 20);
+    expect(history.items.length, 2);
+    expect(history.items.first.id, '1001');
+    expect(history.items.first.senderName, '群友A');
+    expect(history.items.first.senderAvatar, 'https://example.com/a.jpg');
+    expect(history.items.first.fromMe, isFalse);
+    expect(history.items.last.fromMe, isTrue);
+
+    final sendResp = jsonDecode(jsonEncode({
+      'result': true,
+      'message': {
+        'msgid': '1003',
+        'content': '群内发送成功',
+        'time': 1700000030,
+        'from_uid': '10001',
+      },
+    })) as Map<String, dynamic>;
+    final sentMsg = DmMessage.fromJson(sendResp, myUid: '10001');
+    expect(sentMsg.id, '1003');
+    expect(sentMsg.text, '群内发送成功');
+    expect(sentMsg.fromMe, isTrue);
+
+    expect(
+      () => DmHistory.parse(
+        jsonEncode({'result': false, 'error_msg': '非群成员'}),
+        myUid: '10001',
+      ),
+      throwsFormatException,
+    );
   });
 }

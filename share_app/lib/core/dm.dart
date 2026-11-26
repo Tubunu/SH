@@ -22,6 +22,7 @@ class DmConversation {
   final int timeMs;
   final int unread;
   final String conversationId;
+  final bool isGroup;
 
   const DmConversation({
     required this.uid,
@@ -31,6 +32,7 @@ class DmConversation {
     this.timeMs = 0,
     this.unread = 0,
     this.conversationId = '',
+    this.isGroup = false,
   });
 
   static List<DmConversation> parseList(String raw) {
@@ -44,6 +46,15 @@ class DmConversation {
         json['user_list'] == null) {
       throw FormatException('${json['errmsg']}');
     }
+    if (json['result'] == false &&
+        json['conversations'] == null &&
+        json['user_list'] == null) {
+      throw FormatException(
+        _str(json, const ['error_msg', 'errmsg', 'msg']).isNotEmpty
+            ? _str(json, const ['error_msg', 'errmsg', 'msg'])
+            : '私信列表请求被拒绝',
+      );
+    }
     final list = _firstList(
       json,
       const ['conversations', 'user_list', 'direct_messages', 'list', 'data'],
@@ -53,25 +64,78 @@ class DmConversation {
     }
     final out = <DmConversation>[];
     for (final item in list.whereType<Map<String, dynamic>>()) {
+      final groupMap = item['group'] is Map<String, dynamic>
+          ? item['group'] as Map<String, dynamic>
+          : null;
       final user = item['user'] is Map<String, dynamic>
           ? item['user'] as Map<String, dynamic>
-          : item;
+          : (groupMap ?? item);
       final last = item['last_message'] is Map<String, dynamic>
           ? item['last_message'] as Map<String, dynamic>
           : (item['direct_message'] is Map<String, dynamic>
               ? item['direct_message'] as Map<String, dynamic>
               : item);
-      final uid = _str(user, const ['id', 'idstr', 'uid']);
+      final itemType =
+          _str(item, const ['type', 'session_type', 'chat_type']).toLowerCase();
+      final userType =
+          _str(user, const ['type', 'session_type', 'chat_type']).toLowerCase();
+      final hasGroupId = _str(item, const ['gid', 'group_id']).isNotEmpty ||
+          _str(user, const ['gid', 'group_id']).isNotEmpty ||
+          _str(last, const ['gid', 'group_id']).isNotEmpty;
+      final hasGroupCount =
+          _int(user, const ['member_count', 'max_member_count']) > 0 ||
+              _int(item, const ['member_count', 'max_member_count']) > 0;
+      final isGroup = groupMap != null ||
+          item['is_group'] == true ||
+          user['is_group'] == true ||
+          hasGroupId ||
+          hasGroupCount ||
+          _str(user, const ['round_avatar_large']).isNotEmpty ||
+          userType == '3' ||
+          userType == '2' ||
+          userType == 'group' ||
+          userType == 'groupchat' ||
+          itemType == '2' ||
+          itemType == '3' ||
+          itemType == 'group' ||
+          itemType == 'groupchat';
+      final uid = isGroup
+          ? [
+              _str(groupMap ?? user, const ['gid', 'group_id', 'id', 'idstr', 'uid']),
+              _str(item, const ['gid', 'group_id', 'uid', 'id', 'idstr']),
+              _str(last, const ['gid', 'group_id']),
+            ].firstWhere((s) => s.isNotEmpty, orElse: () => '')
+          : _str(user, const ['id', 'idstr', 'uid']);
       if (uid.isEmpty) continue;
+      final name = _str(user, const ['screen_name', 'name', 'nick', 'title', 'remark'])
+              .isNotEmpty
+          ? _str(user, const ['screen_name', 'name', 'nick', 'title', 'remark'])
+          : _str(item, const ['name', 'title', 'screen_name']);
+      final avatar = _str(user, const [
+        'avatar_hd',
+        'avatar_large',
+        'round_avatar_large',
+        'profile_image_url',
+        'avatar',
+      ]).isNotEmpty
+          ? _str(user, const [
+              'avatar_hd',
+              'avatar_large',
+              'round_avatar_large',
+              'profile_image_url',
+              'avatar',
+            ])
+          : _str(item, const ['round_avatar_large', 'avatar_large', 'avatar']);
       final timeMs = _timeMs(last, const ['created_at', 'updated_at', 'time']);
       out.add(DmConversation(
         uid: uid,
-        name: _str(user, const ['screen_name', 'name', 'nick', 'remark']),
-        avatar: _str(user, const ['avatar_hd', 'avatar_large', 'profile_image_url', 'avatar']),
+        name: name,
+        avatar: avatar,
         preview: _str(last, const ['text', 'content', 'last_message']),
         timeMs: timeMs > 0 ? timeMs : _timeMs(item, const ['created_at', 'updated_at', 'time']),
         unread: _int(item, const ['unread_count', 'unread', 'new_message_count']),
         conversationId: _str(item, const ['id', 'idstr', 'conversation_id']),
+        isGroup: isGroup,
       ));
     }
     // Newest conversation first — the server usually already orders them.
@@ -86,6 +150,7 @@ class DmMessage {
   final int timeMs;
   final String senderId;
   final String senderName;
+  final String senderAvatar;
   final bool fromMe;
 
   const DmMessage({
@@ -94,25 +159,52 @@ class DmMessage {
     required this.timeMs,
     this.senderId = '',
     this.senderName = '',
+    this.senderAvatar = '',
     this.fromMe = false,
   });
 
   static DmMessage fromJson(Map<String, dynamic> json, {required String myUid}) {
-    final senderMap = json['sender'] is Map<String, dynamic>
-        ? json['sender'] as Map<String, dynamic>
-        : null;
-    final sender = _str(json, const ['sender_id', 'uid', 'from_uid']).isNotEmpty
-        ? _str(json, const ['sender_id', 'uid', 'from_uid'])
+    final src = json['message'] is Map<String, dynamic>
+        ? json['message'] as Map<String, dynamic>
+        : (json['data'] is Map<String, dynamic> &&
+                json['text'] == null &&
+                json['content'] == null
+            ? json['data'] as Map<String, dynamic>
+            : json);
+    final senderMap = src['sender'] is Map<String, dynamic>
+        ? src['sender'] as Map<String, dynamic>
+        : (src['from_user'] is Map<String, dynamic>
+            ? src['from_user'] as Map<String, dynamic>
+            : (src['user'] is Map<String, dynamic>
+                ? src['user'] as Map<String, dynamic>
+                : null));
+    final directSender = _str(src, const ['sender_id', 'from_uid', 'uid']);
+    final sender = directSender.isNotEmpty
+        ? directSender
         : (senderMap != null ? _str(senderMap, const ['idstr', 'id', 'uid']) : '');
-    final senderName = _str(json, const ['sender_screen_name', 'screen_name']).isNotEmpty
-        ? _str(json, const ['sender_screen_name', 'screen_name'])
-        : (senderMap != null ? _str(senderMap, const ['screen_name', 'name']) : '');
+    final directName =
+        _str(src, const ['sender_screen_name', 'from_screen_name', 'screen_name']);
+    final senderName = directName.isNotEmpty
+        ? directName
+        : (senderMap != null ? _str(senderMap, const ['screen_name', 'name', 'nick']) : '');
+    final directAvatar = _str(src, const ['sender_avatar', 'avatar']);
+    final senderAvatar = directAvatar.isNotEmpty
+        ? directAvatar
+        : (senderMap != null
+            ? _str(senderMap, const [
+                'avatar_hd',
+                'avatar_large',
+                'profile_image_url',
+                'avatar',
+              ])
+            : '');
     return DmMessage(
-      id: _str(json, const ['id', 'idstr', 'mid']),
-      text: _str(json, const ['text', 'content']),
-      timeMs: _timeMs(json, const ['created_at', 'time']),
+      id: _str(src, const ['id', 'idstr', 'mid', 'msgid']),
+      text: _str(src, const ['text', 'content']),
+      timeMs: _timeMs(src, const ['created_at', 'time', 'timestamp']),
       senderId: sender,
       senderName: senderName,
+      senderAvatar: senderAvatar,
       fromMe: myUid.isNotEmpty && sender == myUid,
     );
   }
@@ -134,6 +226,15 @@ class DmHistory {
         json['direct_messages'] == null &&
         json['messages'] == null) {
       throw FormatException('${json['errmsg']}');
+    }
+    if (json['result'] == false &&
+        json['direct_messages'] == null &&
+        json['messages'] == null) {
+      throw FormatException(
+        _str(json, const ['error_msg', 'errmsg', 'msg']).isNotEmpty
+            ? _str(json, const ['error_msg', 'errmsg', 'msg'])
+            : '消息记录请求被拒绝',
+      );
     }
     final list = _firstList(json, const ['direct_messages', 'messages', 'list', 'data']);
     if (list == null) {
@@ -161,7 +262,10 @@ List<dynamic>? _firstList(Map<String, dynamic> json, List<String> keys) {
     final value = json[key];
     if (value is List) return value;
     if (value is Map<String, dynamic>) {
-      final nested = _firstList(value, const ['list', 'data']);
+      final nested = _firstList(
+        value,
+        const ['messages', 'direct_messages', 'conversations', 'user_list', 'list', 'data'],
+      );
       if (nested != null) return nested;
     }
   }

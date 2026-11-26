@@ -444,7 +444,7 @@ pub async fn dm_history(
     count: u32,
 ) -> WebResult<String> {
     let mut url = format!(
-        "{API_BASE}/webim/2/direct_messages/recent_messages.json?convert_emoji=1&count={count}&uid={uid}&is_include_group=0"
+        "{API_BASE}/webim/2/direct_messages/recent_messages.json?convert_emoji=1&count={count}&uid={uid}&is_include_group=1"
     );
     if let Some(m) = max_id {
         if !m.is_empty() {

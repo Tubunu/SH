@@ -13,6 +13,7 @@ import '../discover/discover_page.dart';
 import '../feed/feed_page.dart';
 import '../message/message_page.dart';
 import '../profile/profile_page.dart';
+import 'share_drawer.dart';
 
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
@@ -24,13 +25,19 @@ class MainShell extends ConsumerStatefulWidget {
 class _MainShellState extends ConsumerState<MainShell> {
   int _index = 0;
   bool _navVisible = true;
+  bool _drawerOpen = false;
   Offset? _dragStart;
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _feedKey = GlobalKey<FeedPageState>();
   int _unread = 0;
   Timer? _unreadTimer;
 
   late final _pages = [
-    FeedPage(key: _feedKey, onSelectTab: _goToTab),
+    FeedPage(
+      key: _feedKey,
+      onSelectTab: _goToTab,
+      onOpenDrawer: _openDrawer,
+    ),
     const DiscoverPage(),
     const MessagePage(),
     const ProfilePage(),
@@ -92,6 +99,22 @@ class _MainShellState extends ConsumerState<MainShell> {
   void _goToTab(int index) {
     if (!mounted) return;
     _select(index);
+  }
+
+  void _openDrawer() {
+    if (ref.read(settingsProvider).showDrawerFromLeft) {
+      _scaffoldKey.currentState?.openDrawer();
+    } else {
+      _scaffoldKey.currentState?.openEndDrawer();
+    }
+  }
+
+  void _onDrawerChanged(bool isOpened) {
+    if (!mounted) return;
+    setState(() {
+      _drawerOpen = isOpened;
+      _dragStart = null;
+    });
   }
 
   @override
@@ -163,11 +186,25 @@ class _MainShellState extends ConsumerState<MainShell> {
             ? FloatingActionButtonLocation.startFloat
             : FloatingActionButtonLocation.endFloat);
 
+    final fromLeft = settings.showDrawerFromLeft;
+    final drawer = ShareDrawer(onSelectTab: _goToTab);
+
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: fromLeft ? drawer : null,
+      endDrawer: fromLeft ? null : drawer,
+      drawerEnableOpenDragGesture: _index == 0,
+      endDrawerEnableOpenDragGesture: _index == 0,
+      onDrawerChanged: fromLeft ? _onDrawerChanged : null,
+      onEndDrawerChanged: fromLeft ? null : _onDrawerChanged,
       body: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: (e) => _dragStart = e.position,
+        onPointerDown: (e) {
+          if (_drawerOpen) return;
+          _dragStart = e.position;
+        },
         onPointerMove: (e) {
+          if (_drawerOpen) return;
           final start = _dragStart;
           if (start == null || _navVisible) return;
           if (!ref.read(settingsProvider).navHideOnScroll) return;
@@ -183,8 +220,17 @@ class _MainShellState extends ConsumerState<MainShell> {
         onPointerCancel: (_) => _dragStart = null,
         child: NotificationListener<ScrollNotification>(
           onNotification: (notification) {
-            if (!ref.read(settingsProvider).navHideOnScroll) return false;
+            if (_drawerOpen || !ref.read(settingsProvider).navHideOnScroll) {
+              return false;
+            }
+            if (notification.metrics.axis != Axis.vertical) return false;
             if (notification is ScrollUpdateNotification) {
+              if (notification.metrics.outOfRange &&
+                  notification.metrics.pixels <=
+                      notification.metrics.minScrollExtent) {
+                if (!_navVisible) setState(() => _navVisible = true);
+                return false;
+              }
               final delta = notification.scrollDelta ?? 0;
               if (delta > 1.2 && _navVisible) {
                 setState(() => _navVisible = false);

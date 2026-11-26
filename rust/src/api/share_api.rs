@@ -1429,16 +1429,144 @@ pub async fn dm_conversations_dual(count: u32, cursor: Option<String>) -> Result
     Err(mob_err.unwrap_or_else(|| "当前账号无私信权限，请在账号管理页通过网页授权补充网页凭证后重试".to_string()))
 }
 
+const WEBIM_SOURCE: &str = "209678993";
+
+fn dm_json_failure(val: &Value) -> Option<String> {
+    if val.get("result").and_then(|v| v.as_bool()) == Some(false) {
+        let msg = val
+            .get("error")
+            .or_else(|| val.get("error_msg"))
+            .or_else(|| val.get("errmsg"))
+            .or_else(|| val.get("msg"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("微博接口拒绝了群聊请求");
+        return Some(msg.to_string());
+    }
+    None
+}
+
+fn dm_messages_len(val: &Value) -> usize {
+    for key in ["messages", "direct_messages", "list", "data"] {
+        if let Some(arr) = val.get(key).and_then(|v| v.as_array()) {
+            return arr.len();
+        }
+        if let Some(obj) = val.get(key).and_then(|v| v.as_object()) {
+            for sub in ["messages", "direct_messages", "list", "data"] {
+                if let Some(arr) = obj.get(sub).and_then(|v| v.as_array()) {
+                    return arr.len();
+                }
+            }
+        }
+    }
+    0
+}
+
 pub async fn dm_history_dual(
     uid: String,
     max_id: Option<String>,
     count: u32,
+    is_group: bool,
 ) -> Result<String, String> {
     let engine = core()?;
+    if is_group {
+        let mut web_err: Option<String> = None;
+        let mut empty_ok: Option<Value> = None;
+        if engine.clean_active_web_cookie().is_some() {
+            let mut gq = vec![
+                ("id", uid.clone()),
+                ("count", count.clamp(1, 50).to_string()),
+                ("convert_emoji", "1".to_string()),
+                ("query_sender", "1".to_string()),
+                ("source", WEBIM_SOURCE.to_string()),
+            ];
+            if let Some(m) = max_id.as_deref().filter(|s| !s.is_empty()) {
+                gq.push(("max_mid", m.to_string()));
+            }
+            match engine
+                .web_request(
+                    "GET",
+                    "https://api.weibo.com/webim/groupchat/query_messages.json",
+                    &gq,
+                    None,
+                    "https://api.weibo.com/chat",
+                )
+                .await
+            {
+                Ok(val) => {
+                    if let Some(err) = dm_json_failure(&val) {
+                        web_err = Some(err);
+                    } else if dm_messages_len(&val) > 0 {
+                        return serde_json::to_string(&val).map_err(|e| e.to_string());
+                    } else {
+                        empty_ok = Some(val);
+                    }
+                }
+                Err(e) => web_err = Some(e),
+            }
+
+            let mut rq = vec![
+                ("convert_emoji", "1".to_string()),
+                ("count", count.to_string()),
+                ("uid", uid.clone()),
+                ("gid", uid.clone()),
+                ("is_include_group", "1".to_string()),
+            ];
+            if let Some(m) = max_id.as_deref().filter(|s| !s.is_empty()) {
+                rq.push(("max_id", m.to_string()));
+            }
+            if let Ok(val) = engine
+                .web_request(
+                    "GET",
+                    "https://api.weibo.com/webim/2/direct_messages/recent_messages.json",
+                    &rq,
+                    None,
+                    "https://api.weibo.com/chat",
+                )
+                .await
+            {
+                if dm_json_failure(&val).is_none() && dm_messages_len(&val) > 0 {
+                    return serde_json::to_string(&val).map_err(|e| e.to_string());
+                }
+            }
+        }
+
+        let mut mob_err: Option<String> = None;
+        if engine.active_session_has_gsid() {
+            match engine
+                .api_cn
+                .dm_group_messages(&uid, max_id.as_deref(), count)
+                .await
+            {
+                Ok(val) => {
+                    if let Some(err) = dm_json_failure(&val) {
+                        mob_err = Some(err);
+                    } else if dm_messages_len(&val) > 0 || empty_ok.is_none() {
+                        return serde_json::to_string(&val).map_err(|e| e.to_string());
+                    }
+                }
+                Err(e) => mob_err = Some(e.to_string()),
+            }
+        }
+
+        if let Some(val) = empty_ok {
+            return serde_json::to_string(&val).map_err(|e| e.to_string());
+        }
+        return Err(web_err
+            .or(mob_err)
+            .unwrap_or_else(|| "当前账号暂无群聊消息权限，请在账号管理页补充网页授权".to_string()));
+    }
+
     let mut mob_err: Option<String> = None;
+    let mut mob_empty: Option<Value> = None;
     if engine.active_session_has_gsid() {
         match engine.api_cn.dm_conversation(&uid, max_id.as_deref(), count).await {
-            Ok(v) => return serde_json::to_string(&v).map_err(|e| e.to_string()),
+            Ok(v) => {
+                if dm_messages_len(&v) > 0 {
+                    return serde_json::to_string(&v).map_err(|e| e.to_string());
+                }
+                mob_empty = Some(v);
+            }
             Err(e) => mob_err = Some(e.to_string()),
         }
     }
@@ -1447,12 +1575,12 @@ pub async fn dm_history_dual(
             ("convert_emoji", "1".to_string()),
             ("count", count.to_string()),
             ("uid", uid),
-            ("is_include_group", "0".to_string()),
+            ("is_include_group", "1".to_string()),
         ];
         if let Some(m) = max_id.filter(|s| !s.is_empty()) {
             q.push(("max_id", m));
         }
-        let val = engine
+        match engine
             .web_request(
                 "GET",
                 "https://api.weibo.com/webim/2/direct_messages/recent_messages.json",
@@ -1460,14 +1588,67 @@ pub async fn dm_history_dual(
                 None,
                 "https://api.weibo.com/chat",
             )
-            .await?;
-        return serde_json::to_string(&val).map_err(|e| e.to_string());
+            .await
+        {
+            Ok(val) => return serde_json::to_string(&val).map_err(|e| e.to_string()),
+            Err(e) if mob_empty.is_none() => mob_err = mob_err.or(Some(e)),
+            Err(_) => {}
+        }
+    }
+    if let Some(v) = mob_empty {
+        return serde_json::to_string(&v).map_err(|e| e.to_string());
     }
     Err(mob_err.unwrap_or_else(|| "当前账号无私信权限，请在账号管理页补充网页授权".to_string()))
 }
 
-pub async fn dm_send_dual(uid: String, text: String) -> Result<String, String> {
+pub async fn dm_send_dual(uid: String, text: String, is_group: bool) -> Result<String, String> {
     let engine = core()?;
+    if is_group {
+        let mut web_err: Option<String> = None;
+        if engine.clean_active_web_cookie().is_some() {
+            match engine
+                .web_request(
+                    "POST",
+                    "https://api.weibo.com/webim/groupchat/send_message.json",
+                    &[],
+                    Some(&[
+                        ("id", uid.clone()),
+                        ("content", text.clone()),
+                        ("return_detail", "1".to_string()),
+                        ("source", WEBIM_SOURCE.to_string()),
+                    ]),
+                    "https://api.weibo.com/chat",
+                )
+                .await
+            {
+                Ok(val) => {
+                    if let Some(err) = dm_json_failure(&val) {
+                        web_err = Some(err);
+                    } else {
+                        return serde_json::to_string(&val).map_err(|e| e.to_string());
+                    }
+                }
+                Err(e) => web_err = Some(e),
+            }
+        }
+        let mut mob_err: Option<String> = None;
+        if engine.active_session_has_gsid() {
+            match engine.api_cn.dm_group_send(&uid, &text).await {
+                Ok(val) => {
+                    if let Some(err) = dm_json_failure(&val) {
+                        mob_err = Some(err);
+                    } else {
+                        return serde_json::to_string(&val).map_err(|e| e.to_string());
+                    }
+                }
+                Err(e) => mob_err = Some(e.to_string()),
+            }
+        }
+        return Err(web_err
+            .or(mob_err)
+            .unwrap_or_else(|| "发送群聊消息需要网页授权或群聊权限".to_string()));
+    }
+
     let mut mob_err: Option<String> = None;
     if engine.active_session_has_gsid() {
         match engine.api_cn.dm_create(&uid, &text).await {

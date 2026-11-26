@@ -767,14 +767,24 @@ class ShareCore {
     String uid, {
     String? maxId,
     int count = 20,
+    bool isGroup = false,
   }) async {
     await ensureInit();
-    return rust.dmHistoryDual(uid: uid, maxId: maxId, count: count);
+    return rust.dmHistoryDual(
+      uid: uid,
+      maxId: maxId,
+      count: count,
+      isGroup: isGroup,
+    );
   }
 
-  Future<String> dmSendDual(String uid, String text) async {
+  Future<String> dmSendDual(
+    String uid,
+    String text, {
+    bool isGroup = false,
+  }) async {
     await ensureInit();
-    return rust.dmSendDual(uid: uid, text: text);
+    return rust.dmSendDual(uid: uid, text: text, isGroup: isGroup);
   }
 
   Future<String> statusShowDual(String id) async {

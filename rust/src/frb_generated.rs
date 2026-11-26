@@ -377,9 +377,10 @@ let api_count = <u32>::sse_decode(&mut deserializer);deserializer.end(); move |c
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_uid = <String>::sse_decode(&mut deserializer);
 let api_max_id = <Option<String>>::sse_decode(&mut deserializer);
-let api_count = <u32>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+let api_count = <u32>::sse_decode(&mut deserializer);
+let api_is_group = <bool>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
                     transform_result_sse::<_, String>((move || async move {
-                         let output_ok = crate::api::share_api::dm_history_dual(api_uid, api_max_id, api_count).await?;   std::result::Result::Ok(output_ok)
+                         let output_ok = crate::api::share_api::dm_history_dual(api_uid, api_max_id, api_count, api_is_group).await?;   std::result::Result::Ok(output_ok)
                     })().await)
                 } })
             }fn wire__crate__api__web_api__dm_send_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {
@@ -397,9 +398,10 @@ let api_text = <String>::sse_decode(&mut deserializer);deserializer.end(); move 
             let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_uid = <String>::sse_decode(&mut deserializer);
-let api_text = <String>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+let api_text = <String>::sse_decode(&mut deserializer);
+let api_is_group = <bool>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
                     transform_result_sse::<_, String>((move || async move {
-                         let output_ok = crate::api::share_api::dm_send_dual(api_uid, api_text).await?;   std::result::Result::Ok(output_ok)
+                         let output_ok = crate::api::share_api::dm_send_dual(api_uid, api_text, api_is_group).await?;   std::result::Result::Ok(output_ok)
                     })().await)
                 } })
             }fn wire__crate__api__share_api__draft_clear_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {

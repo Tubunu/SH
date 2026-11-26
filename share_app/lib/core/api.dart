@@ -1135,22 +1135,37 @@ class WeiboApi {
     String uid, {
     String? maxId,
     int count = 20,
+    bool isGroup = false,
     required String myUid,
   }) async {
     final raw = _useDual
-        ? await ShareCore.instance.dmHistoryDual(uid, maxId: maxId, count: count)
+        ? await ShareCore.instance.dmHistoryDual(
+            uid,
+            maxId: maxId,
+            count: count,
+            isGroup: isGroup,
+          )
         : await rust.dmHistory(uid: uid, maxId: maxId, count: count);
     return DmHistory.parse(raw, myUid: myUid, count: count);
   }
 
   /// Sends a message and returns the server's own copy of it.
-  Future<DmMessage> dmSend(String uid, String text, {required String myUid}) async {
+  Future<DmMessage> dmSend(
+    String uid,
+    String text, {
+    bool isGroup = false,
+    required String myUid,
+  }) async {
     final raw = _useDual
-        ? await ShareCore.instance.dmSendDual(uid, text)
+        ? await ShareCore.instance.dmSendDual(uid, text, isGroup: isGroup)
         : await rust.dmSend(uid: uid, text: text);
     final json = decodeObject(raw);
     if (json['error'] is String && (json['error'] as String).isNotEmpty) {
       throw FormatException('${json['error']}');
+    }
+    if (json['result'] == false) {
+      final msg = json['error_msg'] ?? json['errmsg'] ?? json['msg'] ?? '发送失败';
+      throw FormatException('$msg');
     }
     return DmMessage.fromJson(json, myUid: myUid);
   }

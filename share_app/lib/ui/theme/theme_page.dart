@@ -111,7 +111,10 @@ class ThemePage extends ConsumerWidget {
     WidgetRef ref,
     ShareThemePreset preset,
   ) async {
-    ref.read(settingsProvider.notifier).setTheme(preset.key);
+    ref.read(settingsProvider.notifier).setTheme(
+          preset.key,
+          platformBrightness: MediaQuery.platformBrightnessOf(context),
+        );
     if (preset.isCustom || preset.isTransparent) {
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -277,7 +280,10 @@ class _ThemeCustomPageState extends ConsumerState<ThemeCustomPage>
   void _save({required bool transparent}) {
     final notifier = ref.read(settingsProvider.notifier);
     notifier.setCustomTheme(_draft);
-    notifier.setTheme(transparent ? 'transparent' : 'custom');
+    notifier.setTheme(
+      transparent ? 'transparent' : 'custom',
+      platformBrightness: MediaQuery.platformBrightnessOf(context),
+    );
     Navigator.of(context).pop();
   }
 

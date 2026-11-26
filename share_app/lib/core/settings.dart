@@ -418,6 +418,8 @@ class AppSettings {
       'auto_night_mode_duration',
       'publish_source',
       'save_photo_path',
+      'last_light_theme',
+      'night_manual_light_trigger',
     ]) {
       final val = p.getString('$_prefix$extraStrKey');
       if (val != null) prefs[extraStrKey] = val;
@@ -487,17 +489,41 @@ class AppSettings {
         _ => 'night_blue',
       };
 
-  ShareThemePreset effectivePreset(Brightness platformBrightness) {
+  static String? activeNightTriggerKey(
+    AppSettings settings,
+    Brightness platformBrightness, [
+    DateTime? now,
+  ]) {
+    final parts = <String>[];
+    if ((settings.followSystemDark || settings.nightFollowSystem) &&
+        platformBrightness == Brightness.dark) {
+      parts.add('sys_dark');
+    }
+    if (settings.autoNight) {
+      final winId = _activeNightWindowId(
+        settings.autoNightDuration,
+        now ?? DateTime.now(),
+      );
+      if (winId != null) {
+        parts.add(winId);
+      }
+    }
+    return parts.isEmpty ? null : parts.join('|');
+  }
+
+  ShareThemePreset effectivePreset(
+    Brightness platformBrightness, [
+    DateTime? now,
+  ]) {
     final base = ShareThemePreset.byKey(themeKey);
     if (base.dark) return base;
-    if ((followSystemDark || nightFollowSystem) &&
-        platformBrightness == Brightness.dark) {
-      return ShareThemePreset.byKey(nightThemeKey);
+    final trigger = activeNightTriggerKey(this, platformBrightness, now);
+    if (trigger == null) return base;
+    final manualOverride = prefs['night_manual_light_trigger'] as String?;
+    if (manualOverride != null && manualOverride == trigger) {
+      return base;
     }
-    if (autoNight && _isInNightWindow(autoNightDuration)) {
-      return ShareThemePreset.byKey(nightThemeKey);
-    }
-    return base;
+    return ShareThemePreset.byKey(nightThemeKey);
   }
 
   // -- Reading / Typography (`xml/q.xml` & `xml/o.xml`) ----------------------
@@ -650,18 +676,30 @@ class AppSettings {
     );
   }
 
-  static bool _isInNightWindow(String range) {
+  static String? _activeNightWindowId(String range, DateTime now) {
     final parts = range.split('-');
-    if (parts.length != 2) return false;
+    if (parts.length != 2) return null;
     final startMin = _parseMinutes(parts[0]);
     final endMin = _parseMinutes(parts[1]);
-    if (startMin == null || endMin == null) return false;
-    final now = DateTime.now();
+    if (startMin == null || endMin == null) return null;
     final cur = now.hour * 60 + now.minute;
+    final DateTime cycleDate;
     if (startMin <= endMin) {
-      return cur >= startMin && cur < endMin;
+      if (cur < startMin || cur >= endMin) return null;
+      cycleDate = DateTime(now.year, now.month, now.day);
+    } else {
+      if (cur >= startMin) {
+        cycleDate = DateTime(now.year, now.month, now.day);
+      } else if (cur < endMin) {
+        cycleDate = DateTime(now.year, now.month, now.day)
+            .subtract(const Duration(days: 1));
+      } else {
+        return null;
+      }
     }
-    return cur >= startMin || cur < endMin;
+    final m = cycleDate.month.toString().padLeft(2, '0');
+    final d = cycleDate.day.toString().padLeft(2, '0');
+    return 'win:${range.trim()}:${cycleDate.year}-$m-$d';
   }
 
   static int? _parseMinutes(String hhmm) {
@@ -677,8 +715,40 @@ class AppSettings {
 class SettingsNotifier extends StateNotifier<AppSettings> {
   SettingsNotifier(super.initial);
 
-  void setTheme(String key) {
-    state = state.copyWith(themeKey: key);
+  static const _nightTriggerPrefKeys = {
+    'auto_night_mode',
+    'auto_night_mode_follow_system',
+    'auto_night_mode_duration',
+    'follow_system_dark',
+  };
+
+  void setTheme(
+    String key, {
+    Brightness? platformBrightness,
+    DateTime? now,
+  }) {
+    final preset = ShareThemePreset.byKey(key);
+    final next = Map<String, Object?>.from(state.prefs);
+    if (preset.dark) {
+      next.remove('night_manual_light_trigger');
+      _removePref('night_manual_light_trigger');
+    } else {
+      next['last_light_theme'] = key;
+      _persist('last_light_theme', key);
+      final trigger = AppSettings.activeNightTriggerKey(
+        state,
+        platformBrightness ?? Brightness.light,
+        now,
+      );
+      if (trigger != null) {
+        next['night_manual_light_trigger'] = trigger;
+        _persist('night_manual_light_trigger', trigger);
+      } else {
+        next.remove('night_manual_light_trigger');
+        _removePref('night_manual_light_trigger');
+      }
+    }
+    state = state.copyWith(themeKey: key, prefs: next);
     _persist('theme', key);
   }
 
@@ -693,7 +763,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   }
 
   void setFollowSystemDark(bool value) {
-    state = state.copyWith(followSystemDark: value);
+    final next = Map<String, Object?>.from(state.prefs);
+    next.remove('night_manual_light_trigger');
+    _removePref('night_manual_light_trigger');
+    state = state.copyWith(followSystemDark: value, prefs: next);
     _persist('follow_system_dark', value);
     setPref('auto_night_mode_follow_system', value);
   }
@@ -723,6 +796,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   void setPref(String key, Object value) {
     final next = Map<String, Object?>.from(state.prefs);
     next[key] = value;
+    if (_nightTriggerPrefKeys.contains(key)) {
+      next.remove('night_manual_light_trigger');
+      _removePref('night_manual_light_trigger');
+    }
     state = state.copyWith(prefs: next);
     _persist(key, value);
 
@@ -736,12 +813,42 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     }
   }
 
-  void toggleThemeDark(bool dark) {
+  void toggleThemeDark(
+    bool dark, {
+    Brightness? platformBrightness,
+    DateTime? now,
+  }) {
     if (dark) {
-      setTheme(state.nightThemeKey);
+      if (!ShareThemePreset.byKey(state.themeKey).dark) {
+        final next = Map<String, Object?>.from(state.prefs);
+        next['last_light_theme'] = state.themeKey;
+        _persist('last_light_theme', state.themeKey);
+        state = state.copyWith(prefs: next);
+      }
+      setTheme(
+        state.nightThemeKey,
+        platformBrightness: platformBrightness,
+        now: now,
+      );
     } else {
-      setTheme('elegant_purple');
+      final currentIsLight = !ShareThemePreset.byKey(state.themeKey).dark;
+      final savedLight = state.prefs['last_light_theme'] as String?;
+      final target = currentIsLight
+          ? state.themeKey
+          : (savedLight != null && !ShareThemePreset.byKey(savedLight).dark
+              ? savedLight
+              : 'elegant_purple');
+      setTheme(
+        target,
+        platformBrightness: platformBrightness,
+        now: now,
+      );
     }
+  }
+
+  Future<void> _removePref(String key) async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove('${AppSettings._prefix}$key');
   }
 
   Future<void> _persist(String key, Object value) async {
