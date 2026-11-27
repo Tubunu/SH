@@ -10,7 +10,6 @@ import '../common/share_actions.dart';
 import '../common/status_action_sheet.dart';
 import '../detail/status_detail_page.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import 'card_shot.dart';
 import '../widgets/pic_grid.dart';
 import '../widgets/weibo_rich_text.dart';
@@ -397,6 +396,7 @@ class _StatusCardState extends ConsumerState<StatusCard> {
     final gridWidth = contentWidth.clamp(120.0, 330.0);
     final fs = settings.fontSize;
     final showExpandHint = !widget.fullText && status.isLongText;
+    final effectiveRetweeted = status.resolvedRetweeted;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -468,10 +468,7 @@ class _StatusCardState extends ConsumerState<StatusCard> {
               ),
             ),
         ],
-        if (status.isVideo &&
-            (status.videoCover != null ||
-                status.videoUrl != null ||
-                (status.videoObjectId ?? '').isNotEmpty)) ...[
+        if (effectiveRetweeted == null && status.hasVideoMedia) ...[
           const SizedBox(height: 10),
           GestureDetector(onTap: onVideoTap, child: _videoCover(gridWidth)),
         ] else if (status.pics.isNotEmpty) ...[
@@ -489,9 +486,9 @@ class _StatusCardState extends ConsumerState<StatusCard> {
             ),
           ),
         ],
-        if (widget.showRetweet && status.retweeted != null) ...[
+        if (widget.showRetweet && effectiveRetweeted != null) ...[
           const SizedBox(height: 8),
-          _retweetBox(context, status.retweeted!, gridWidth, fs, settings),
+          _retweetBox(context, effectiveRetweeted, gridWidth, fs, settings),
         ],
         if (settings.hotCommentPreview &&
             !widget.fullText &&
@@ -635,18 +632,7 @@ class _StatusCardState extends ConsumerState<StatusCard> {
   }
 
   void _openRetweetVideo(BuildContext context, Status original) {
-    final url = original.videoUrl ?? '';
-    if (url.isEmpty && (original.videoObjectId ?? '').isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VideoPage(
-          url: url,
-          objectId: original.videoObjectId,
-          cover: original.videoCover,
-          title: original.textRaw,
-        ),
-      ),
-    );
+    ShareActions.openStatusVideo(context, original);
   }
 
   Widget _retweetBox(
@@ -711,13 +697,12 @@ class _StatusCardState extends ConsumerState<StatusCard> {
                   ),
                 ),
               ],
-              if (original.isVideo &&
-                  (original.videoCover != null ||
-                      original.videoUrl != null ||
-                      (original.videoObjectId ?? '').isNotEmpty)) ...[
+              if (original.hasVideoMedia) ...[
                 const SizedBox(height: 8),
                 GestureDetector(
-                  onTap: onVideoTap ?? () => _openRetweetVideo(context, original),
+                  onTap: original.hasPlayableVideo
+                      ? () => _openRetweetVideo(context, original)
+                      : onVideoTap,
                   child: _videoCover(
                     width,
                     coverOverride: original.videoCover ?? '',

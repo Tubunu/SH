@@ -62,12 +62,12 @@ class CachedTimelineSnapshot {
         groupKey: '${decoded['groupKey'] ?? 'all'}',
         items: items,
         maxId: decoded['maxId']?.toString(),
-        page: (decoded['page'] as num?)?.toInt() ?? 1,
-        hasMore: (decoded['hasMore'] as bool?) ?? true,
-        usingGuestFeed: (decoded['usingGuestFeed'] as bool?) ?? false,
-        scrollOffset: (decoded['scrollOffset'] as num?)?.toDouble() ?? 0.0,
+        page: jsonInt(decoded['page'], 1),
+        hasMore: jsonBool(decoded['hasMore'], true),
+        usingGuestFeed: jsonBool(decoded['usingGuestFeed']),
+        scrollOffset: jsonDouble(decoded['scrollOffset']),
         anchorStatusId: '${decoded['anchorStatusId'] ?? ''}',
-        savedAtMs: (decoded['savedAtMs'] as num?)?.toInt() ?? 0,
+        savedAtMs: jsonInt(decoded['savedAtMs']),
       );
     } catch (_) {
       return null;

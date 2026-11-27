@@ -14,7 +14,6 @@ import '../compose/emoji_panel.dart';
 import '../feed/status_card.dart';
 import '../profile/user_page.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import 'comment_floor_page.dart';
 import 'likers_list.dart';
 import 'repost_list_page.dart';
@@ -360,28 +359,7 @@ class _StatusDetailPageState extends ConsumerState<StatusDetailPage> {
                   builder: (_) => GalleryPage(pics: _status.pics, initialIndex: i),
                 ),
               ),
-              onVideoTap: () {
-                final target = (_status.videoUrl == null &&
-                        (_status.videoObjectId ?? '').isEmpty &&
-                        _status.retweeted != null)
-                    ? _status.retweeted!
-                    : _status;
-                final url = target.videoUrl ?? '';
-                if (url.isEmpty && (target.videoObjectId ?? '').isEmpty) {
-                  _toast('该视频暂不支持播放');
-                  return;
-                }
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => VideoPage(
-                      url: url,
-                      objectId: target.videoObjectId,
-                      cover: target.videoCover,
-                      title: target.textRaw,
-                    ),
-                  ),
-                );
-              },
+              onVideoTap: () => ShareActions.openStatusVideo(context, _status),
             ),
             _interactionBar(),
           ],

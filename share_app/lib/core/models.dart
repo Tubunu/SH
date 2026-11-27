@@ -225,18 +225,18 @@ class User {
         'remark',
       ]),
       avatar: _bigAvatar(avatar),
-      remark: json['remark'] as String?,
-      verified: json['verified'] as bool? ?? false,
-      verifiedType: (json['verified_type'] as num?)?.toInt() ?? -1,
-      verifiedReason: (json['verified_reason'] ?? '') as String,
-      description: (json['description'] ?? '') as String,
-      followers: (json['followers_count'] as num?)?.toInt() ?? 0,
-      friends: (json['friends_count'] as num?)?.toInt() ?? 0,
-      statuses: (json['statuses_count'] as num?)?.toInt() ?? 0,
-      following: json['following'] as bool? ?? false,
-      gender: (json['gender'] ?? '') as String,
-      location: (json['location'] ?? '') as String,
-      cover: (json['cover_image_phone'] ?? '') as String,
+      remark: jsonNullableStr(json['remark']),
+      verified: jsonBool(json['verified']),
+      verifiedType: jsonInt(json['verified_type'], -1),
+      verifiedReason: jsonStr(json['verified_reason']),
+      description: jsonStr(json['description']),
+      followers: jsonInt(json['followers_count']),
+      friends: jsonInt(json['friends_count']),
+      statuses: jsonInt(json['statuses_count']),
+      following: jsonBool(json['following']),
+      gender: jsonStr(json['gender']),
+      location: jsonStr(json['location']),
+      cover: jsonStr(json['cover_image_phone']),
     );
   }
 
@@ -353,10 +353,10 @@ class Pic {
         final origUrl = (info['original'] is Map ? info['original']['url'] : null) ??
             large['url'];
         pics.add(Pic(
-          url: '${large['url'] ?? ''}',
-          large: origUrl is String ? origUrl : null,
-          width: (large['width'] as num?)?.toInt() ?? 0,
-          height: (large['height'] as num?)?.toInt() ?? 0,
+          url: jsonStr(large['url']),
+          large: jsonNullableStr(origUrl),
+          width: jsonInt(large['width']),
+          height: jsonInt(large['height']),
           pid: id,
         ));
       }
@@ -366,20 +366,17 @@ class Pic {
     if (singlePic is Map) {
       final geo = singlePic['geo'];
       final largeMap = singlePic['large'];
-      final largeUrl = largeMap is Map ? '${largeMap['url'] ?? ''}' : '';
-      final thumbUrl = '${singlePic['url'] ?? ''}';
+      final largeUrl = largeMap is Map ? jsonStr(largeMap['url']) : '';
+      final thumbUrl = jsonStr(singlePic['url']);
       final resolvedUrl = thumbUrl.isNotEmpty ? thumbUrl : largeUrl;
       if (resolvedUrl.isNotEmpty) {
         pics.add(Pic(
           url: resolvedUrl,
           large: largeUrl.isNotEmpty ? largeUrl : null,
-          width: ((singlePic['width'] ?? (geo is Map ? geo['width'] : null)) as num?)
-                  ?.toInt() ??
-              0,
-          height: ((singlePic['height'] ?? (geo is Map ? geo['height'] : null)) as num?)
-                  ?.toInt() ??
-              0,
-          pid: (singlePic['pid'] as String?) ?? extractPid(largeUrl.isNotEmpty ? largeUrl : thumbUrl),
+          width: jsonInt(singlePic['width'] ?? (geo is Map ? geo['width'] : null)),
+          height: jsonInt(singlePic['height'] ?? (geo is Map ? geo['height'] : null)),
+          pid: jsonNullableStr(singlePic['pid']) ??
+              extractPid(largeUrl.isNotEmpty ? largeUrl : thumbUrl),
         ));
       }
       if (pics.isNotEmpty) return pics;
@@ -390,24 +387,20 @@ class Pic {
         final geo = p['geo'];
         final largeMap = p['large'];
         final largeGeo = largeMap is Map ? largeMap['geo'] : null;
-        final u = '${p['url'] ?? ''}';
+        final u = jsonStr(p['url']);
         if (u.isEmpty) continue;
-        final largeUrl = largeMap is Map ? largeMap['url'] as String? : null;
+        final largeUrl = largeMap is Map ? jsonNullableStr(largeMap['url']) : null;
         pics.add(Pic(
           url: u,
           large: largeUrl,
-          width: ((p['width'] ??
-                      (geo is Map ? geo['width'] : null) ??
-                      (largeGeo is Map ? largeGeo['width'] : null)) as num?)
-                  ?.toInt() ??
-              0,
-          height: ((p['height'] ??
-                      (geo is Map ? geo['height'] : null) ??
-                      (largeGeo is Map ? largeGeo['height'] : null)) as num?)
-                  ?.toInt() ??
-              0,
-          videoUrl: p['video_url'] as String?,
-          pid: (p['pid'] as String?) ?? extractPid(largeUrl ?? u),
+          width: jsonInt(p['width'] ??
+              (geo is Map ? geo['width'] : null) ??
+              (largeGeo is Map ? largeGeo['width'] : null)),
+          height: jsonInt(p['height'] ??
+              (geo is Map ? geo['height'] : null) ??
+              (largeGeo is Map ? largeGeo['height'] : null)),
+          videoUrl: jsonNullableStr(p['video_url']),
+          pid: jsonNullableStr(p['pid']) ?? extractPid(largeUrl ?? u),
         ));
       }
     }
@@ -484,31 +477,34 @@ class Status {
   });
 
   factory Status.fromJson(Map<String, dynamic> json) {
-    final pageInfo = json['page_info'] as Map<String, dynamic>?;
-    final isVideo = pageInfo != null &&
+    final pageInfo = jsonMap(json['page_info']);
+    final outerIsVideo = pageInfo != null &&
         (pageInfo['type'] == 'video' ||
             pageInfo['object_type'] == 'video' ||
             pageInfo['media_info'] is Map);
 
     final pics = <Pic>[];
-    final infoMap = json['pic_infos'];
-    if (infoMap is Map<String, dynamic>) {
-      final ids = (json['pic_ids'] as List?)?.cast<String>() ?? infoMap.keys.toList();
+    final infoMap = jsonMap(json['pic_infos']);
+    if (infoMap != null) {
+      final ids = (json['pic_ids'] as List?)?.map((e) => '$e').toList() ??
+          infoMap.keys.toList();
       for (final id in ids) {
         final info = infoMap[id];
         if (info is! Map) continue;
-        final large = (info['large'] ?? info['bmiddle'] ?? info['thumbnail']) as Map?;
-        final bmid = (info['bmiddle'] ?? info['large']) as Map?;
-        if (large == null) continue;
+        final largeRaw = info['large'] ?? info['bmiddle'] ?? info['thumbnail'];
+        if (largeRaw is! Map) continue;
+        final bmidRaw = info['bmiddle'] ?? info['large'];
+        final origRaw = info['original'];
         pics.add(Pic(
-          url: (large['url'] ?? '') as String,
-          large: (info['original']?['url'] ?? large['url']) as String?,
-          width: (large['width'] as num?)?.toInt() ?? 0,
-          height: (large['height'] as num?)?.toInt() ?? 0,
+          url: jsonStr(largeRaw['url']),
+          large: jsonNullableStr(
+              (origRaw is Map ? origRaw['url'] : null) ?? largeRaw['url']),
+          width: jsonInt(largeRaw['width']),
+          height: jsonInt(largeRaw['height']),
           pid: id,
         ));
         // keep bmiddle for grid when large is oversized
-        if (bmid != null && pics.isNotEmpty) {
+        if (bmidRaw is Map && pics.isNotEmpty) {
           // no-op: bmiddle handled by url rewrite in widget
         }
       }
@@ -518,30 +514,26 @@ class Status {
           final geo = p['geo'];
           final largeMap = p['large'];
           final largeGeo = largeMap is Map ? largeMap['geo'] : null;
-          final u = (p['url'] ?? '') as String;
-          final largeUrl = largeMap is Map ? largeMap['url'] as String? : null;
+          final u = jsonStr(p['url']);
+          final largeUrl = largeMap is Map ? jsonNullableStr(largeMap['url']) : null;
           pics.add(Pic(
             url: u,
             large: largeUrl,
-            width: ((p['width'] ??
-                    (geo is Map ? geo['width'] : null) ??
-                    (largeGeo is Map ? largeGeo['width'] : null)) as num?)
-                ?.toInt() ??
-                0,
-            height: ((p['height'] ??
-                    (geo is Map ? geo['height'] : null) ??
-                    (largeGeo is Map ? largeGeo['height'] : null)) as num?)
-                ?.toInt() ??
-                0,
-            videoUrl: p['video_url'] as String?,
-            pid: (p['pid'] as String?) ?? Pic.extractPid(largeUrl ?? u),
+            width: jsonInt(p['width'] ??
+                (geo is Map ? geo['width'] : null) ??
+                (largeGeo is Map ? largeGeo['width'] : null)),
+            height: jsonInt(p['height'] ??
+                (geo is Map ? geo['height'] : null) ??
+                (largeGeo is Map ? largeGeo['height'] : null)),
+            videoUrl: jsonNullableStr(p['video_url']),
+            pid: jsonNullableStr(p['pid']) ?? Pic.extractPid(largeUrl ?? u),
           ));
         }
       }
     } else if (json['pic_urls'] is List) {
       for (final p in (json['pic_urls'] as List)) {
         if (p is Map) {
-          final thumb = '${p['thumbnail_pic'] ?? ''}'.trim();
+          final thumb = jsonStr(p['thumbnail_pic']).trim();
           if (thumb.isNotEmpty) {
             pics.add(Pic(
               url: thumb.replaceFirst('/thumbnail/', '/bmiddle/'),
@@ -553,72 +545,157 @@ class Status {
       }
     }
 
-    final retweetedJson = json['retweeted_status'];
-    final userJson = json['user'];
-    final longTextObj = json['longText'];
-    final resolvedText = (longTextObj is Map &&
-            longTextObj['longTextContent'] is String &&
-            (longTextObj['longTextContent'] as String).isNotEmpty)
-        ? longTextObj['longTextContent'] as String
-        : (json['text'] ?? '') as String;
-    final attStatus = (json['attitudes_status'] as num?)?.toInt() ?? 0;
+    final retweetedMap = jsonMap(json['retweeted_status']);
+    var retweeted = retweetedMap != null ? Status.fromJson(retweetedMap) : null;
+    final userMap = jsonMap(json['user']);
+    final longTextObj = jsonMap(json['longText']);
+    final longTextStr =
+        longTextObj != null ? jsonStr(longTextObj['longTextContent']) : '';
+    final resolvedText =
+        longTextStr.isNotEmpty ? longTextStr : jsonStr(json['text']);
+    final attStatus = jsonInt(json['attitudes_status']);
 
     final picInfoMap = pageInfo?['pic_info'];
-    final videoCover = _picUrl(pageInfo?['page_pic']) ??
+    final outerVideoCover = _picUrl(pageInfo?['page_pic']) ??
         _picUrl(picInfoMap is Map
             ? (picInfoMap['pic_big'] ?? picInfoMap['pic_middle'] ?? picInfoMap['pic_small'])
             : null);
-    final videoObjectId = pageInfo?['object_id']?.toString();
+    final rawObjectId = jsonStr(pageInfo?['object_id']).trim();
+    final outerVideoObjectId = rawObjectId.isNotEmpty ? rawObjectId : null;
+    final mediaInfoMap = jsonMap(pageInfo?['media_info']);
+    final outerVideoDuration = jsonInt(mediaInfoMap?['duration']);
+    final outerVideoUrl = _videoUrl(pageInfo, allowPageUrlFallback: outerIsVideo);
+
+    var effectiveIsVideo = outerIsVideo;
+    var effectiveVideoDuration = outerVideoDuration;
+    String? effectiveVideoCover = outerVideoCover;
+    String? effectiveVideoUrl = outerVideoUrl;
+    String? effectiveVideoObjectId = outerVideoObjectId;
+
+    // 转发微博时，微博接口常把原博的视频 page_info 挂在外层转发微博对象上（而非 retweeted_status 内）。
+    // 将此类视频元数据归并回被转发的原微博内部，使视频显示在引用框内部而非外层。
+    if (retweeted != null && outerIsVideo) {
+      retweeted = _mergeRetweetVideo(
+        retweeted,
+        outerDuration: outerVideoDuration,
+        outerCover: outerVideoCover,
+        outerUrl: outerVideoUrl,
+        outerObjectId: outerVideoObjectId,
+      );
+      effectiveIsVideo = false;
+      effectiveVideoDuration = 0;
+      effectiveVideoCover = null;
+      effectiveVideoUrl = null;
+      effectiveVideoObjectId = null;
+    }
+
     final rawHotComment = json['hot_comment'] ??
         json['recommend_comment'] ??
         (json['hot_comments'] is List && (json['hot_comments'] as List).isNotEmpty
             ? (json['hot_comments'] as List).first
             : null);
-    final hotComment = rawHotComment is Map<String, dynamic>
-        ? Comment.fromJson(rawHotComment)
-        : (rawHotComment is Map
-            ? Comment.fromJson(Map<String, dynamic>.from(rawHotComment))
-            : null);
+    final hotCommentMap = jsonMap(rawHotComment);
+    final hotComment =
+        hotCommentMap != null ? Comment.fromJson(hotCommentMap) : null;
     final titleObj = json['title'];
-    final isTop = json['isTop'] == 1 ||
-        json['isTop'] == true ||
-        json['is_top'] == true ||
-        (json['mblogtype'] as num?)?.toInt() == 2 ||
+    final isTop = jsonBool(json['isTop']) ||
+        jsonBool(json['is_top']) ||
+        jsonInt(json['mblogtype']) == 2 ||
         (titleObj is Map && '${titleObj['text']}'.contains('置顶'));
     final rawVisible = json['visible'];
     final visible = rawVisible is Map
-        ? ((rawVisible['type'] as num?)?.toInt() ?? 0)
-        : ((rawVisible as num?)?.toInt() ?? 0);
+        ? jsonInt(rawVisible['type'])
+        : jsonInt(rawVisible);
+    final textRawStr = jsonStr(json['text_raw']);
 
     return Status(
       id: '${json['idstr'] ?? json['id'] ?? ''}',
       mblogid: '${json['mblogid'] ?? json['mid'] ?? json['idstr'] ?? json['id'] ?? ''}',
-      createdAt: '${json['created_at'] ?? ''}',
+      createdAt: jsonStr(json['created_at']),
       textHtml: resolvedText,
-      textRaw: (json['text_raw'] is String && (json['text_raw'] as String).isNotEmpty)
-          ? json['text_raw'] as String
+      textRaw: textRawStr.isNotEmpty
+          ? textRawStr
           : RichTextParser.toPlain(resolvedText),
-      source: '${json['source'] ?? ''}',
-      user: userJson is Map<String, dynamic> ? User.fromJson(userJson) : null,
-      retweeted: retweetedJson is Map<String, dynamic> ? Status.fromJson(retweetedJson) : null,
+      source: jsonStr(json['source']),
+      user: userMap != null ? User.fromJson(userMap) : null,
+      retweeted: retweeted,
       pics: pics,
-      reposts: (json['reposts_count'] as num?)?.toInt() ?? 0,
-      comments: (json['comments_count'] as num?)?.toInt() ?? 0,
-      attitudes: (json['attitudes_count'] as num?)?.toInt() ?? 0,
-      isLongText: (json['isLongText'] as bool? ?? false) || (longTextObj != null),
-      favorited: json['favorited'] as bool? ?? false,
-      liked: (json['liked'] as bool? ?? false) || attStatus == 1,
+      reposts: jsonInt(json['reposts_count']),
+      comments: jsonInt(json['comments_count']),
+      attitudes: jsonInt(json['attitudes_count']),
+      isLongText: jsonBool(json['isLongText']) || (longTextObj != null),
+      favorited: jsonBool(json['favorited']),
+      liked: jsonBool(json['liked']) || attStatus == 1,
       isTop: isTop,
       visible: visible,
-      region: '${json['region_name'] ?? ''}',
-      isVideo: isVideo,
-      videoDuration: (pageInfo?['media_info']?['duration'] as num?)?.toInt() ?? 0,
-      videoCover: videoCover,
-      videoUrl: _videoUrl(pageInfo, allowPageUrlFallback: isVideo),
-      videoObjectId: (videoObjectId != null && videoObjectId.isNotEmpty) ? videoObjectId : null,
+      region: jsonStr(json['region_name']),
+      isVideo: effectiveIsVideo,
+      videoDuration: effectiveVideoDuration,
+      videoCover: effectiveVideoCover,
+      videoUrl: effectiveVideoUrl,
+      videoObjectId: effectiveVideoObjectId,
       topic: _topicTitle(json['topic_struct']),
       hotComment: (hotComment != null && hotComment.textHtml.isNotEmpty) ? hotComment : null,
     );
+  }
+
+  static Status _mergeRetweetVideo(
+    Status original, {
+    required int outerDuration,
+    required String? outerCover,
+    required String? outerUrl,
+    required String? outerObjectId,
+  }) {
+    final origCover =
+        (original.videoCover != null && original.videoCover!.isNotEmpty)
+            ? original.videoCover
+            : outerCover;
+    final origUrl =
+        (original.videoUrl != null && original.videoUrl!.isNotEmpty)
+            ? original.videoUrl
+            : outerUrl;
+    final origObjectId =
+        (original.videoObjectId != null && original.videoObjectId!.isNotEmpty)
+            ? original.videoObjectId
+            : outerObjectId;
+    return original.copyWith(
+      isVideo: true,
+      videoDuration:
+          original.videoDuration > 0 ? original.videoDuration : outerDuration,
+      videoCover: origCover,
+      videoUrl: origUrl,
+      videoObjectId: origObjectId,
+    );
+  }
+
+  bool get hasPlayableVideo =>
+      (videoUrl != null && videoUrl!.isNotEmpty) ||
+      (videoObjectId != null && videoObjectId!.isNotEmpty);
+
+  bool get hasVideoMedia =>
+      isVideo &&
+      (hasPlayableVideo || (videoCover != null && videoCover!.isNotEmpty));
+
+  /// 返回已归一化的引用原博（即使早期缓存中仍将视频挂在外层 `Status`，也可在 UI 侧折叠回引用框内）。
+  Status? get resolvedRetweeted {
+    final rt = retweeted;
+    if (rt == null) return null;
+    if (!isVideo) return rt;
+    return _mergeRetweetVideo(
+      rt,
+      outerDuration: videoDuration,
+      outerCover: videoCover,
+      outerUrl: videoUrl,
+      outerObjectId: videoObjectId,
+    );
+  }
+
+  /// 点击播放时定位真实视频所在的微博（优先外层可播视频，否则回退至引用原博）。
+  Status get resolvedVideoTarget {
+    if (hasPlayableVideo) return this;
+    final rt = resolvedRetweeted;
+    if (rt != null && rt.hasPlayableVideo) return rt;
+    return rt ?? this;
   }
 
   String get cleanSource {
@@ -639,6 +716,11 @@ class Status {
     String? textRaw,
     bool? isLongText,
     Status? retweeted,
+    bool? isVideo,
+    int? videoDuration,
+    String? videoCover,
+    String? videoUrl,
+    String? videoObjectId,
   }) {
     return Status(
       id: id,
@@ -659,11 +741,11 @@ class Status {
       isTop: isTop ?? this.isTop,
       visible: visible ?? this.visible,
       region: region,
-      isVideo: isVideo,
-      videoDuration: videoDuration,
-      videoCover: videoCover,
-      videoUrl: videoUrl,
-      videoObjectId: videoObjectId,
+      isVideo: isVideo ?? this.isVideo,
+      videoDuration: videoDuration ?? this.videoDuration,
+      videoCover: videoCover ?? this.videoCover,
+      videoUrl: videoUrl ?? this.videoUrl,
+      videoObjectId: videoObjectId ?? this.videoObjectId,
       topic: topic,
       hotComment: hotComment,
     );
@@ -742,11 +824,10 @@ class Comment {
 
   factory Comment.fromJson(Map<String, dynamic> json) {
     final reply = json['reply_comment'];
-    final rawFloor = json['floor_number'];
-    final floor = rawFloor is num ? rawFloor.toInt() : (int.tryParse('$rawFloor') ?? 0);
-    final likeFlag = json['liked'] == true ||
-        json['is_liked'] == true ||
-        (json['like_status'] as num?)?.toInt() == 1;
+    final floor = jsonInt(json['floor_number']);
+    final likeFlag = jsonBool(json['liked']) ||
+        jsonBool(json['is_liked']) ||
+        jsonInt(json['like_status']) == 1;
 
     final rawSubList = json['comments'] ??
         json['commentFloors'] ??
@@ -754,15 +835,14 @@ class Comment {
     final parsedReplies = <Comment>[];
     if (rawSubList is List) {
       for (final item in rawSubList) {
-        if (item is Map<String, dynamic>) {
-          parsedReplies.add(Comment.fromJson(item));
-        } else if (item is Map) {
-          parsedReplies.add(Comment.fromJson(Map<String, dynamic>.from(item)));
+        final itemMap = jsonMap(item);
+        if (itemMap != null) {
+          parsedReplies.add(Comment.fromJson(itemMap));
         }
       }
     }
 
-    var replyCount = (json['total_number'] as num?)?.toInt() ?? 0;
+    var replyCount = jsonInt(json['total_number']);
     if (replyCount <= 0 && json['more_info'] is Map) {
       final moreText = '${(json['more_info'] as Map)['text'] ?? ''}';
       final digits = RegExp(r'\d+').firstMatch(moreText)?.group(0);
@@ -774,25 +854,22 @@ class Comment {
       replyCount = parsedReplies.length;
     }
 
+    final userMap = jsonMap(json['user']);
+    final replyMap = jsonMap(reply);
+
     return Comment(
       id: '${json['idstr'] ?? json['id'] ?? ''}',
       rootId: '${json['rootidstr'] ?? json['rootid'] ?? json['idstr'] ?? json['id'] ?? ''}',
-      createdAt: '${json['created_at'] ?? ''}',
-      textHtml: '${json['text'] ?? ''}',
-      user: json['user'] is Map<String, dynamic>
-          ? User.fromJson(json['user'] as Map<String, dynamic>)
-          : (json['user'] is Map
-              ? User.fromJson(Map<String, dynamic>.from(json['user'] as Map))
-              : null),
-      likeCount: (json['like_counts'] as num? ?? json['like_count'] as num?)?.toInt() ?? 0,
+      createdAt: jsonStr(json['created_at']),
+      textHtml: jsonStr(json['text']),
+      user: userMap != null ? User.fromJson(userMap) : null,
+      likeCount: jsonNullableInt(json['like_counts']) ??
+          jsonNullableInt(json['like_count']) ??
+          0,
       replyCount: replyCount,
       floor: floor,
-      replyTo: reply is Map<String, dynamic>
-          ? Comment.fromJson(reply)
-          : (reply is Map
-              ? Comment.fromJson(Map<String, dynamic>.from(reply))
-              : null),
-      likedByAuthor: json['isLikedByMblogAuthor'] == true,
+      replyTo: replyMap != null ? Comment.fromJson(replyMap) : null,
+      likedByAuthor: jsonBool(json['isLikedByMblogAuthor']),
       likedByMe: likeFlag,
       replies: parsedReplies,
       pics: Pic.parseFromMapList(json),
@@ -838,6 +915,64 @@ Map<String, dynamic> decodeObject(String raw) {
   final decoded = jsonDecode(raw);
   if (decoded is Map<String, dynamic>) return decoded;
   throw const FormatException('接口返回格式异常');
+}
+
+Map<String, dynamic>? jsonMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return null;
+}
+
+int jsonInt(dynamic value, [int fallback = 0]) {
+  return jsonNullableInt(value) ?? fallback;
+}
+
+int? jsonNullableInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    return int.tryParse(trimmed) ?? double.tryParse(trimmed)?.toInt();
+  }
+  if (value is bool) return value ? 1 : 0;
+  return null;
+}
+
+double jsonDouble(dynamic value, [double fallback = 0.0]) {
+  if (value == null) return fallback;
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return fallback;
+    return double.tryParse(trimmed) ?? fallback;
+  }
+  return fallback;
+}
+
+bool jsonBool(dynamic value, [bool fallback = false]) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    final lower = value.trim().toLowerCase();
+    if (lower == 'true' || lower == '1') return true;
+    if (lower == 'false' || lower == '0' || lower.isEmpty) return false;
+  }
+  return fallback;
+}
+
+String jsonStr(dynamic value, [String fallback = '']) {
+  if (value == null) return fallback;
+  if (value is String) return value;
+  return value.toString();
+}
+
+String? jsonNullableStr(dynamic value) {
+  if (value == null) return null;
+  if (value is String) return value;
+  return value.toString();
 }
 
 /// `page_pic` is sometimes `{url: ...}` and sometimes a bare string (or a list)

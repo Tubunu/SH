@@ -168,8 +168,8 @@ class WeiboApi {
         (json['cards'] as List?) ??
         const [];
     final items = _extractStatusesFromList(list);
-    final total = (data is Map ? (data['total'] as num?)?.toInt() : null) ??
-        (json['total_number'] as num?)?.toInt() ??
+    final total = (data is Map ? jsonNullableInt(data['total']) : null) ??
+        jsonNullableInt(json['total_number']) ??
         0;
     return Paged(
       items: items,
@@ -282,7 +282,7 @@ class WeiboApi {
         ? await ShareCore.instance.translateStatusDual(idstr, locale: locale)
         : await rust.translateStatus(idstr: idstr, locale: locale);
     final json = decodeObject(raw);
-    final ok = (json['ok'] as num?)?.toInt() ?? 1;
+    final ok = jsonInt(json['ok'], 1);
     if (ok <= 0 && json['data'] == null) {
       throw FormatException('${json['msg'] ?? '翻译失败'}');
     }
@@ -484,7 +484,9 @@ class WeiboApi {
     for (final key in const ['root_comments', 'data', 'comments']) {
       final list = json[key];
       if (list is List && list.isNotEmpty) {
-        for (final e in list.whereType<Map<String, dynamic>>()) {
+        for (final rawItem in list) {
+          final e = jsonMap(rawItem);
+          if (e == null) continue;
           if (e['text'] != null || e['user'] != null || e['id'] != null) {
             items.add(Comment.fromJson(e));
           }
@@ -493,9 +495,10 @@ class WeiboApi {
       }
     }
     if (json['datas'] is List) {
-      for (final e in (json['datas'] as List).whereType<Map<String, dynamic>>()) {
-        final inner = e['data'];
-        final target = inner is Map<String, dynamic> ? inner : e;
+      for (final rawEntry in (json['datas'] as List)) {
+        final e = jsonMap(rawEntry);
+        if (e == null) continue;
+        final target = jsonMap(e['data']) ?? e;
         if (target['text'] != null || target['user'] != null || target['id'] != null) {
           items.add(Comment.fromJson(target));
         }
@@ -503,8 +506,11 @@ class WeiboApi {
       if (items.isNotEmpty) return items;
     }
     if (flow == 0 && json['hot_comments'] is List) {
-      for (final e in (json['hot_comments'] as List).whereType<Map<String, dynamic>>()) {
-        items.add(Comment.fromJson(e));
+      for (final rawItem in (json['hot_comments'] as List)) {
+        final e = jsonMap(rawItem);
+        if (e != null) {
+          items.add(Comment.fromJson(e));
+        }
       }
     }
     return items;
@@ -801,7 +807,7 @@ class WeiboApi {
       items.add(HotSearchItem(
         rank: items.length + 1,
         word: word,
-        hot: (e['num'] as num?)?.toInt() ?? 0,
+        hot: jsonInt(e['num']),
         label: rawLabel,
         category: '${e['category'] ?? e['flag_desc'] ?? ''}'.trim(),
       ));
@@ -991,7 +997,9 @@ class WeiboApi {
     final json = decodeObject(raw);
     final list = (json['data'] as List?) ?? (json['favorites'] as List?) ?? const [];
     final items = _extractStatusesFromList(list);
-    final count = (json['count'] ?? json['total_number'] as num?)?.toInt() ?? items.length;
+    final count = jsonNullableInt(json['count']) ??
+        jsonNullableInt(json['total_number']) ??
+        items.length;
     return Paged(
       items: items,
       maxId: '$page',

@@ -1957,4 +1957,159 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     }
   });
+
+  testWidgets('Retweeted video renders inside quoted box even when outer JSON hoists page_info',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final parsed = Status.fromJson({
+      'idstr': '5200000000000002',
+      'mblogid': 'Q999xyz',
+      'text': '转发评论正文',
+      'user': {'id': '100', 'screen_name': '转发者'},
+      'page_info': {
+        'type': 'video',
+        'object_id': '1034:99887766',
+        'page_pic': {'url': 'https://wx1.sinaimg.cn/large/cover.jpg'},
+        'media_info': {
+          'duration': '65',
+          'mp4_720p_mp4': 'https://f.video.weibocdn.com/test.mp4',
+        },
+      },
+      'retweeted_status': {
+        'idstr': '5200000000000001',
+        'mblogid': 'O111abc',
+        'text': '原博视频正文',
+        'user': {'id': '200', 'screen_name': '原博主'},
+      },
+    });
+
+    expect(parsed.isVideo, isFalse);
+    expect(parsed.videoUrl, isNull);
+    expect(parsed.retweeted, isNotNull);
+    expect(parsed.retweeted!.isVideo, isTrue);
+    expect(parsed.retweeted!.videoDuration, 65);
+    expect(parsed.retweeted!.videoObjectId, '1034:99887766');
+    expect(parsed.resolvedVideoTarget.id, '5200000000000001');
+
+    // Also verify cached/stale Status with outer video still renders inside retweet box.
+    const staleCached = Status(
+      id: '5200000000000002',
+      mblogid: 'Q999xyz',
+      createdAt: '',
+      textHtml: '转发评论正文',
+      textRaw: '转发评论正文',
+      source: 'Share',
+      isVideo: true,
+      videoDuration: 65,
+      videoCover: '',
+      videoObjectId: '1034:99887766',
+      user: User(id: '100', name: '转发者', avatar: ''),
+      retweeted: Status(
+        id: '5200000000000001',
+        mblogid: 'O111abc',
+        createdAt: '',
+        textHtml: '原博视频正文',
+        textRaw: '原博视频正文',
+        source: 'Share',
+        user: User(id: '200', name: '原博主', avatar: ''),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: StatusCard(
+                status: staleCached,
+                showActions: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('01:05'), findsOneWidget);
+    final quoteBoxFinder = find.byWidgetPredicate(
+      (w) => w is Material && w.color == ShareColors.repostBg,
+    );
+    expect(quoteBoxFinder, findsOneWidget);
+    expect(
+      find.descendant(of: quoteBoxFinder, matching: find.text('01:05')),
+      findsOneWidget,
+    );
+  });
+
+  test('Comments and embedded media/users handle stringified numeric and boolean JSON fields safely', () {
+    final comments = WeiboApi.extractCommentsFromPayload({
+      'root_comments': [
+        {
+          'idstr': '9001',
+          'rootidstr': '9001',
+          'created_at': 'Fri Nov 27 08:45:00 +0800 2026',
+          'text': '测试带图跟评',
+          'floor_number': '15',
+          'like_counts': '42',
+          'like_status': '1',
+          'total_number': '7',
+          'isLikedByMblogAuthor': '1',
+          'user': {
+            'id': 12345,
+            'screen_name': '博士',
+            'verified': 'true',
+            'verified_type': '0',
+            'followers_count': '1234',
+            'friends_count': '56',
+            'statuses_count': '789',
+            'verified_reason': 0,
+          },
+          'pic': {
+            'url': 'https://wx1.sinaimg.cn/bmiddle/cmtpic.jpg',
+            'width': '1080',
+            'height': '1440',
+            'large': {
+              'url': 'https://wx1.sinaimg.cn/large/cmtpic.jpg',
+            },
+          },
+          'comments': [
+            {
+              'idstr': '9002',
+              'rootidstr': '9001',
+              'text': '子回复',
+              'like_count': '9',
+              'like_status': '0',
+              'user': {
+                'id': '67890',
+                'screen_name': '楼友',
+                'verified_type': '-1',
+                'followers_count': '10.5万',
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(comments, hasLength(1));
+    final c = comments.single;
+    expect(c.floor, 15);
+    expect(c.likeCount, 42);
+    expect(c.likedByMe, isTrue);
+    expect(c.likedByAuthor, isTrue);
+    expect(c.replyCount, 7);
+    expect(c.user?.verified, isTrue);
+    expect(c.user?.verifiedType, 0);
+    expect(c.user?.followers, 1234);
+    expect(c.user?.friends, 56);
+    expect(c.user?.statuses, 789);
+    expect(c.pics, hasLength(1));
+    expect(c.pics.single.width, 1080);
+    expect(c.pics.single.height, 1440);
+    expect(c.replies, hasLength(1));
+    expect(c.replies.single.likeCount, 9);
+    expect(c.replies.single.user?.verifiedType, -1);
+    expect(c.replies.single.user?.followers, 0);
+  });
 }

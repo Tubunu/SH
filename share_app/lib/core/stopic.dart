@@ -22,8 +22,8 @@ class StopicCate {
     return data
         .whereType<Map<String, dynamic>>()
         .map((e) => StopicCate(
-              id: (e['id'] as num?)?.toInt() ?? 0,
-              name: (e['name'] ?? '') as String,
+              id: jsonInt(e['id']),
+              name: jsonStr(e['name']),
             ))
         .where((c) => c.name.isNotEmpty)
         .toList();
@@ -55,24 +55,26 @@ class Stopic {
   /// items (`page >= count` stops paging in the official SPA).
   static ({List<Stopic> items, int pages}) parse(String raw) {
     final json = decodeObject(raw);
-    if (json['errno'] is num && (json['errno'] as num).toInt() != 0) {
+    if (jsonInt(json['errno']) != 0) {
       final msg = json['errmsg'] ?? json['msg'] ?? '超话接口返回错误';
       throw FormatException('$msg');
     }
     final data = json['data'];
     if (data is! List) return (items: <Stopic>[], pages: 0);
-    final pages = (json['count'] as num?)?.toInt() ?? 0;
+    final pages = jsonInt(json['count']);
 
     final items = <Stopic>[];
-    for (final e in data.whereType<Map<String, dynamic>>()) {
-      final title = (e['title'] ?? '') as String;
+    for (final rawItem in data) {
+      final e = jsonMap(rawItem);
+      if (e == null) continue;
+      final title = jsonStr(e['title']);
       if (title.isEmpty) continue;
-      final desc = (e['description'] ?? '') as String;
+      final desc = jsonStr(e['description']);
       final (fans, body) = _splitFans(desc);
       items.add(Stopic(
-        pageId: (e['page_id'] ?? e['id'] ?? '') as String,
+        pageId: jsonStr(e['page_id'] ?? e['id']),
         title: title,
-        image: (e['image'] ?? '') as String,
+        image: jsonStr(e['image']),
         description: body,
         fans: fans,
       ));

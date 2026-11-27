@@ -96,14 +96,15 @@ class NoticeFeed {
       throw FormatException('$message');
     }
 
-    final total = (data['total_number'] as num?)?.toInt() ?? 0;
-    final nextCursor = (data['next_cursor'] as num?)?.toInt() ?? 0;
+    final total = jsonInt(data['total_number']);
+    final nextCursor = jsonInt(data['next_cursor']);
     final maxId = data['max_id']?.toString() ?? '';
     final hasNextCursor = nextCursor > 0 || (maxId.isNotEmpty && maxId != '0');
 
     if (kind == NoticeKind.atWeibo) {
       final list = (data['statuses'] as List?) ?? const [];
       final statuses = list
+          .map(jsonMap)
           .whereType<Map<String, dynamic>>()
           .map(Status.fromJson)
           .toList();
@@ -117,17 +118,17 @@ class NoticeFeed {
     if (kind == NoticeKind.like) {
       final list = (data['attitudes'] as List?) ?? const [];
       final notices = <Notice>[];
-      for (final item in list.whereType<Map<String, dynamic>>()) {
+      for (final rawItem in list) {
+        final item = jsonMap(rawItem);
+        if (item == null) continue;
+        final userMap = jsonMap(item['user']);
+        final statusMap = jsonMap(item['status']);
         notices.add(Notice(
           id: '${item['id'] ?? item['idstr'] ?? item['idStr'] ?? ''}',
           kind: kind,
-          createdAt: (item['created_at'] ?? '') as String,
-          from: item['user'] is Map<String, dynamic>
-              ? User.fromJson(item['user'] as Map<String, dynamic>)
-              : null,
-          status: item['status'] is Map<String, dynamic>
-              ? Status.fromJson(item['status'] as Map<String, dynamic>)
-              : null,
+          createdAt: jsonStr(item['created_at']),
+          from: userMap != null ? User.fromJson(userMap) : null,
+          status: statusMap != null ? Status.fromJson(statusMap) : null,
           attitude: (item['attitude'] ?? item['attitude_type'] ?? 'heart').toString(),
         ));
       }
@@ -140,20 +141,20 @@ class NoticeFeed {
 
     final list = (data['comments'] as List?) ?? const [];
     final notices = <Notice>[];
-    for (final item in list.whereType<Map<String, dynamic>>()) {
-      final reply = item['reply_comment'];
+    for (final rawItem in list) {
+      final item = jsonMap(rawItem);
+      if (item == null) continue;
+      final reply = jsonMap(item['reply_comment']);
+      final userMap = jsonMap(item['user']);
+      final statusMap = jsonMap(item['status']);
       notices.add(Notice(
         id: '${item['id'] ?? item['idstr'] ?? ''}',
         kind: kind,
-        createdAt: (item['created_at'] ?? '') as String,
-        from: item['user'] is Map<String, dynamic>
-            ? User.fromJson(item['user'] as Map<String, dynamic>)
-            : null,
-        textHtml: (item['text'] ?? '') as String,
-        status: item['status'] is Map<String, dynamic>
-            ? Status.fromJson(item['status'] as Map<String, dynamic>)
-            : null,
-        myComment: reply is Map<String, dynamic> ? (reply['text'] as String?) : null,
+        createdAt: jsonStr(item['created_at']),
+        from: userMap != null ? User.fromJson(userMap) : null,
+        textHtml: jsonStr(item['text']),
+        status: statusMap != null ? Status.fromJson(statusMap) : null,
+        myComment: reply != null ? jsonNullableStr(reply['text']) : null,
       ));
     }
     return NoticeFeed(
@@ -230,8 +231,8 @@ class UnreadHint {
       }
       return UnreadHint(
         counts: counts,
-        dmUsers: (data['page_friends_to_me'] as num?)?.toInt() ?? 0,
-        dmGroups: (data['page_group_to_me'] as num?)?.toInt() ?? 0,
+        dmUsers: jsonInt(data['page_friends_to_me']),
+        dmGroups: jsonInt(data['page_group_to_me']),
       );
     }
 

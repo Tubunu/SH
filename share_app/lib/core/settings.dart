@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models.dart';
 import 'settings_spec.dart';
 
 /// Custom / Transparent skin configuration serialized in `theme_custom_value`.
@@ -62,12 +63,12 @@ class CustomThemeConfig {
       final m = jsonDecode(raw);
       if (m is! Map) return const CustomThemeConfig();
       return CustomThemeConfig(
-        primaryColorValue: (m['primary'] as num?)?.toInt() ?? 0xFFB693AE,
-        accentColorValue: (m['accent'] as num?)?.toInt() ?? 0xFFDDA5AD,
-        backgroundImagePath: m['imagePath'] as String?,
-        blurRadius: (m['blur'] as num?)?.toDouble() ?? 6.0,
-        maskAlpha: (m['maskAlpha'] as num?)?.toDouble() ?? 0.25,
-        lightFont: (m['lightFont'] as bool?) ?? true,
+        primaryColorValue: jsonInt(m['primary'], 0xFFB693AE),
+        accentColorValue: jsonInt(m['accent'], 0xFFDDA5AD),
+        backgroundImagePath: jsonNullableStr(m['imagePath']),
+        blurRadius: jsonDouble(m['blur'], 6.0),
+        maskAlpha: jsonDouble(m['maskAlpha'], 0.25),
+        lightFont: jsonBool(m['lightFont'], true),
       );
     } catch (_) {
       return const CustomThemeConfig();

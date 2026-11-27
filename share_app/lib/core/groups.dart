@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'models.dart';
+
 /// 微博分组 —— `/ajax/feed/allGroups`。
 ///
 /// 游客也能拿到完整结构：默认分组（全部关注 / 最新微博 / 互相关注 / 原创 /
@@ -49,7 +51,9 @@ class WeiboGroup {
               gid: '${json['gid'] ?? json['idstr'] ?? json['id'] ?? ''}',
               title: '${json['title'] ?? json['name'] ?? ''}',
               navigationTitle: '${json['navigation_title'] ?? ''}',
-              count: (json['count'] ?? json['member_count'] as num?)?.toInt() ?? 0,
+              count: jsonNullableInt(json['count']) ??
+                  jsonNullableInt(json['member_count']) ??
+                  0,
               type: '${json['type'] ?? ''}',
               apiPath: '${json['apipath'] ?? ''}',
               containerId: '${json['containerid'] ?? ''}',

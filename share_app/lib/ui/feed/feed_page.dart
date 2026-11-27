@@ -12,10 +12,10 @@ import '../../core/session.dart';
 import '../../core/settings.dart';
 import '../../core/share_core.dart';
 import '../app_theme.dart';
+import '../common/share_actions.dart';
 import '../common/status_action_sheet.dart';
 import '../detail/status_detail_page.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import '../profile/user_page.dart';
 import '../search/search_page.dart';
 import '../shell/share_drawer.dart';
@@ -923,28 +923,7 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
   }
 
   void _openVideo(Status status) {
-    final target = (status.videoUrl == null &&
-            (status.videoObjectId ?? '').isEmpty &&
-            status.retweeted != null &&
-            (status.retweeted!.videoUrl != null ||
-                (status.retweeted!.videoObjectId ?? '').isNotEmpty))
-        ? status.retweeted!
-        : status;
-    final url = target.videoUrl ?? '';
-    if (url.isEmpty && (target.videoObjectId ?? '').isEmpty) {
-      _toast('该视频暂不支持播放');
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VideoPage(
-          url: url,
-          objectId: target.videoObjectId,
-          cover: target.videoCover,
-          title: target.textRaw,
-        ),
-      ),
-    );
+    ShareActions.openStatusVideo(context, status);
   }
 
   Widget _footer() {

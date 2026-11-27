@@ -6,10 +6,10 @@ import '../../core/models.dart';
 import '../../core/share_core.dart';
 import '../../core/stopic.dart';
 import '../app_theme.dart';
+import '../common/share_actions.dart';
 import '../detail/status_detail_page.dart';
 import '../feed/status_card.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 
 /// 超话详情.
 ///
@@ -253,20 +253,7 @@ class _StopicDetailPageState extends ConsumerState<StopicDetailPage> {
             ),
           );
         },
-        onVideoTap: () {
-          final url = status.videoUrl ?? '';
-          if (url.isEmpty && (status.videoObjectId ?? '').isEmpty) return;
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => VideoPage(
-                url: url,
-                objectId: status.videoObjectId,
-                cover: status.videoCover,
-                title: status.textRaw,
-              ),
-            ),
-          );
-        },
+        onVideoTap: () => ShareActions.openStatusVideo(context, status),
       ));
       rows.add(Container(height: 0.6, color: ShareColors.divider));
     }

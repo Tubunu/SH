@@ -5,9 +5,9 @@ import '../../core/api.dart';
 import '../../core/models.dart';
 import '../../core/settings.dart';
 import '../app_theme.dart';
+import '../common/share_actions.dart';
 import '../feed/status_card.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import '../profile/user_page.dart';
 import 'status_detail_page.dart';
 
@@ -235,20 +235,7 @@ class _RepostTabListState extends ConsumerState<RepostTabList> {
                   builder: (_) => GalleryPage(pics: item.pics, initialIndex: i),
                 ),
               ),
-              onVideoTap: () {
-                final url = item.videoUrl ?? '';
-                if (url.isEmpty && (item.videoObjectId ?? '').isEmpty) return;
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => VideoPage(
-                      url: url,
-                      objectId: item.videoObjectId,
-                      cover: item.videoCover,
-                      title: item.textRaw,
-                    ),
-                  ),
-                );
-              },
+              onVideoTap: () => ShareActions.openStatusVideo(context, item),
             );
           },
           childCount: _items.length * 2 - 1,

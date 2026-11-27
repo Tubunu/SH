@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../core/models.dart';
 import '../../core/session.dart';
 import '../../core/share_core.dart';
 import '../app_theme.dart';
@@ -134,10 +135,10 @@ class _LoginPageState extends ConsumerState<LoginPage>
       return;
     }
 
-    final raw = (res['raw'] as Map<String, dynamic>?) ?? const {};
-    final errno = (res['errno'] as num?)?.toInt() ??
-        (raw['errno'] as num?)?.toInt() ??
-        (raw['error_code'] as num?)?.toInt();
+    final raw = jsonMap(res['raw']) ?? const <String, dynamic>{};
+    final errno = jsonNullableInt(res['errno']) ??
+        jsonNullableInt(raw['errno']) ??
+        jsonNullableInt(raw['error_code']);
 
     // 风控短信二次验证 (phone_list / phone / retcode)
     if (errno == -1005 || errno == 20031 || raw['phone_list'] != null) {

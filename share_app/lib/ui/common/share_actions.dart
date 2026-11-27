@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/models.dart';
 import '../../core/settings.dart';
 import '../app_theme.dart';
+import '../media/video_page.dart';
 
 /// 保存图片 / 系统分享 / 复制文本。
 ///
@@ -333,6 +334,25 @@ class ShareActions {
     final box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return null;
     return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  static void openStatusVideo(BuildContext context, Status status) {
+    final target = status.resolvedVideoTarget;
+    final url = target.videoUrl ?? '';
+    if (url.isEmpty && (target.videoObjectId ?? '').isEmpty) {
+      _toast(context, '该视频暂不支持播放');
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VideoPage(
+          url: url,
+          objectId: target.videoObjectId,
+          cover: target.videoCover,
+          title: target.textRaw,
+        ),
+      ),
+    );
   }
 
   static void _toast(BuildContext context, String text) {

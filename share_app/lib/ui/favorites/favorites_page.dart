@@ -5,10 +5,10 @@ import '../../core/api.dart';
 import '../../core/models.dart';
 import '../../core/session.dart';
 import '../app_theme.dart';
+import '../common/share_actions.dart';
 import '../detail/status_detail_page.dart';
 import '../feed/status_card.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 
 /// 我的收藏 — `/ajax/favorites/all_fav`.
 class FavoritesPage extends ConsumerStatefulWidget {
@@ -213,20 +213,7 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
                 ),
               );
             },
-            onVideoTap: () {
-              final url = status.videoUrl ?? '';
-              if (url.isEmpty && (status.videoObjectId ?? '').isEmpty) return;
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => VideoPage(
-                    url: url,
-                    objectId: status.videoObjectId,
-                    cover: status.videoCover,
-                    title: status.textRaw,
-                  ),
-                ),
-              );
-            },
+            onVideoTap: () => ShareActions.openStatusVideo(context, status),
           ),
         );
       },

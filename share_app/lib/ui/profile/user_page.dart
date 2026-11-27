@@ -7,11 +7,11 @@ import '../../core/session.dart';
 import '../../core/settings.dart';
 import '../../core/share_core.dart';
 import '../app_theme.dart';
+import '../common/share_actions.dart';
 import '../detail/status_detail_page.dart';
 import '../dm/dm_chat_page.dart';
 import '../feed/status_card.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import 'profile_search_page.dart';
 import 'social_manage_page.dart';
 
@@ -347,25 +347,7 @@ class _UserPageState extends ConsumerState<UserPage> {
             ),
           );
         },
-        onVideoTap: () {
-          final target = (status.videoUrl == null &&
-                  (status.videoObjectId ?? '').isEmpty &&
-                  status.retweeted != null)
-              ? status.retweeted!
-              : status;
-          final url = target.videoUrl ?? '';
-          if (url.isEmpty && (target.videoObjectId ?? '').isEmpty) return;
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => VideoPage(
-                url: url,
-                objectId: target.videoObjectId,
-                cover: target.videoCover,
-                title: target.textRaw,
-              ),
-            ),
-          );
-        },
+        onVideoTap: () => ShareActions.openStatusVideo(context, status),
       ));
       rows.add(Container(height: 0.6, color: ShareColors.divider));
     }

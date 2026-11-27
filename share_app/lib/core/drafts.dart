@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models.dart';
 import 'share_core.dart';
 import '../src/rust/api/share_api.dart' show DraftDto;
 
@@ -17,8 +18,8 @@ class Draft {
 
   factory Draft.fromJson(Map<String, dynamic> json) => Draft(
         id: '${json['id'] ?? ''}',
-        text: (json['text'] ?? '') as String,
-        updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+        text: jsonStr(json['text']),
+        updatedAt: jsonInt(json['updatedAt']),
       );
 }
 

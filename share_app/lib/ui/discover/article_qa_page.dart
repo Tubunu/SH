@@ -5,10 +5,10 @@ import '../../core/models.dart';
 import '../../core/settings.dart';
 import '../../core/share_core.dart';
 import '../app_theme.dart';
+import '../common/share_actions.dart';
 import '../detail/status_detail_page.dart';
 import '../feed/status_card.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import '../widgets/weibo_rich_text.dart';
 
 /// 1:1 复刻 `HotStatusActivity`：依托 `/2/guest/login` + `/2/statuses/unread_hot_timeline`
@@ -171,21 +171,7 @@ class _HotStatusPageState extends ConsumerState<HotStatusPage> {
             onImageTap: (idx) => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => GalleryPage(pics: st.pics, initialIndex: idx)),
             ),
-            onVideoTap: () {
-              final url = st.videoUrl ?? '';
-              if (url.isNotEmpty || (st.videoObjectId ?? '').isNotEmpty) {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => VideoPage(
-                      url: url,
-                      objectId: st.videoObjectId,
-                      cover: st.videoCover,
-                      title: st.textRaw,
-                    ),
-                  ),
-                );
-              }
-            },
+            onVideoTap: () => ShareActions.openStatusVideo(context, st),
           );
         },
       ),

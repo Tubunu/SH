@@ -451,6 +451,7 @@ class _PosterCanvas extends StatelessWidget {
       if (status.cleanSource.isNotEmpty) '来自 ${status.cleanSource}',
       if (status.region.isNotEmpty) status.region,
     ];
+    final effectiveRetweeted = status.resolvedRetweeted;
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -537,23 +538,18 @@ class _PosterCanvas extends StatelessWidget {
         if (showImages && status.pics.isNotEmpty) ...[
           const SizedBox(height: 14),
           _stackedImages(status.pics),
-        ] else if (status.isVideo &&
+        ] else if (effectiveRetweeted == null &&
+            status.isVideo &&
             status.videoCover != null &&
             status.videoCover!.isNotEmpty) ...[
           const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Image.network(status.videoCover!, fit: BoxFit.cover),
-            ),
-          ),
+          _videoPosterCover(status.videoCover!),
         ],
 
         // Quoted retweet box (also untruncated)
-        if (status.retweeted != null) ...[
+        if (effectiveRetweeted != null) ...[
           const SizedBox(height: 14),
-          _retweetSection(status.retweeted!),
+          _retweetSection(effectiveRetweeted),
         ],
 
         const SizedBox(height: 16),
@@ -718,7 +714,40 @@ class _PosterCanvas extends StatelessWidget {
           if (showImages && original.pics.isNotEmpty) ...[
             const SizedBox(height: 10),
             _stackedImages(original.pics),
+          ] else if (original.isVideo &&
+              original.videoCover != null &&
+              original.videoCover!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _videoPosterCover(original.videoCover!),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _videoPosterCover(String coverUrl) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Image.network(coverUrl, fit: BoxFit.cover),
+          ),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 26,
+            ),
+          ),
         ],
       ),
     );

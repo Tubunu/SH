@@ -11,8 +11,8 @@ import '../detail/status_detail_page.dart';
 import '../feed/status_card.dart';
 import '../login/login_page.dart';
 import '../media/gallery_page.dart';
-import '../media/video_page.dart';
 import '../common/segment_actions.dart';
+import '../common/share_actions.dart';
 import '../profile/user_page.dart';
 import '../widgets/weibo_rich_text.dart';
 
@@ -298,18 +298,7 @@ class _NoticeFeedViewState extends ConsumerState<_NoticeFeedView> {
   }
 
   void _openVideo(Status status) {
-    final url = status.videoUrl ?? '';
-    if (url.isEmpty && (status.videoObjectId ?? '').isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VideoPage(
-          url: url,
-          objectId: status.videoObjectId,
-          cover: status.videoCover,
-          title: status.textRaw,
-        ),
-      ),
-    );
+    ShareActions.openStatusVideo(context, status);
   }
 
   @override
