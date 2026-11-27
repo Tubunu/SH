@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,15 +52,62 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
   bool _usingGuestFeed = false;
   FeedGroup? _forcedGroup;
   double _lastKnownOffset = 0;
+  String _lastKnownAnchorId = '';
+  double _lastKnownAnchorOffset = 0;
   double _rememberedTopToggleOffset = 0;
   String _cachedAccountUid = '';
   bool _disposing = false;
+  bool _isRestoringScroll = false;
+  int _restoreToken = 0;
   Timer? _saveDebounce;
+  final Map<String, GlobalKey> _itemKeys = <String, GlobalKey>{};
+  String _lastSavedSig = '';
 
   /// 当前分组；`null` = 全部关注。
   WeiboGroup? _group;
   List<WeiboGroup> _groups = const [];
   bool _groupsLoaded = false;
+
+  GlobalKey _keyForStatus(String id) => _itemKeys.putIfAbsent(id, GlobalKey.new);
+
+  void _pruneItemKeys() {
+    if (_itemKeys.length <= _items.length + 16) return;
+    final activeIds = _items.map((e) => e.id).toSet();
+    _itemKeys.removeWhere((id, _) => !activeIds.contains(id));
+  }
+
+  RenderBox? _viewportBox() {
+    if (!_controller.hasClients) return null;
+    final ro = _controller.position.context.storageContext.findRenderObject();
+    if (ro is! RenderBox || !ro.attached || !ro.hasSize) return null;
+    return ro;
+  }
+
+  ({String statusId, double anchorOffset})? _captureAnchor() {
+    if (_items.isEmpty) return null;
+    final viewportBox = _viewportBox();
+    if (viewportBox == null) return null;
+
+    for (final status in _items) {
+      final ro = _itemKeys[status.id]?.currentContext?.findRenderObject();
+      if (ro is! RenderBox || !ro.attached || !ro.hasSize) continue;
+      final top = ro.localToGlobal(Offset.zero, ancestor: viewportBox).dy;
+      final bottom = top + ro.size.height;
+      if (bottom <= 0.5 || top > viewportBox.size.height) continue;
+
+      var anchorOffset = -top;
+      if (_controller.offset <= 0.5 && anchorOffset < 0) {
+        anchorOffset = 0;
+      }
+      return (statusId: status.id, anchorOffset: anchorOffset);
+    }
+    return null;
+  }
+
+  void _cancelRestore() {
+    _restoreToken++;
+    _isRestoringScroll = false;
+  }
 
   @override
   void initState() {
@@ -76,6 +124,7 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
   @override
   void dispose() {
     _disposing = true;
+    _cancelRestore();
     _saveDebounce?.cancel();
     if (_items.isNotEmpty) {
       unawaited(_saveCacheSnapshot());
@@ -92,14 +141,27 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
-      unawaited(_saveCacheSnapshot());
+      _saveDebounce?.cancel();
+      if (_items.isNotEmpty) {
+        unawaited(_saveCacheSnapshot());
+      }
     }
   }
 
   void _onScroll() {
-    if (!mounted || _disposing) return;
+    if (!mounted || _disposing || _isRestoringScroll) return;
     if (_controller.hasClients) {
       _lastKnownOffset = _controller.offset;
+      if (_lastKnownOffset <= 0.5 && _items.isNotEmpty) {
+        _lastKnownAnchorId = _items.first.id;
+        _lastKnownAnchorOffset = 0;
+      } else {
+        final anchor = _captureAnchor();
+        if (anchor != null) {
+          _lastKnownAnchorId = anchor.statusId;
+          _lastKnownAnchorOffset = anchor.anchorOffset;
+        }
+      }
       _saveDebounce?.cancel();
       _saveDebounce = Timer(const Duration(milliseconds: 350), () {
         if (mounted && !_disposing && _items.isNotEmpty) {
@@ -177,56 +239,262 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
     final restored = snap;
 
     if (restored != null && restored.items.isNotEmpty && !startRefresh) {
-      setState(() {
-        _items
-          ..clear()
-          ..addAll(_filter(restored.items));
-        _maxId = restored.maxId;
-        _page = restored.page;
-        _hasMore = restored.hasMore;
-        _usingGuestFeed = restored.usingGuestFeed;
-        _loading = false;
-        _error = null;
-        _lastKnownOffset = restored.scrollOffset;
-      });
-      _restoreScrollOffset(restored.scrollOffset);
+      _applyRestoredSnapshot(restored);
       return;
     }
 
     await _loadFirst(scrollToTopAfter: true, force: true);
   }
 
-  void _restoreScrollOffset(double offset) {
-    if (offset <= 0) return;
-    void applyJump([int attempt = 0]) {
-      if (!mounted) return;
-      if (!_controller.hasClients) {
-        if (attempt < 5) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => applyJump(attempt + 1));
+  void _applyRestoredSnapshot(CachedTimelineSnapshot snap) {
+    final filtered = _filter(snap.items);
+    setState(() {
+      _items
+        ..clear()
+        ..addAll(filtered);
+      _maxId = snap.maxId;
+      _page = snap.page;
+      _hasMore = snap.hasMore;
+      _usingGuestFeed = snap.usingGuestFeed;
+      _loading = false;
+      _error = null;
+      _lastKnownOffset = snap.scrollOffset;
+      _lastKnownAnchorId = snap.anchorStatusId;
+      _lastKnownAnchorOffset = snap.anchorOffset;
+    });
+    _pruneItemKeys();
+    _restoreScrollPosition(
+      snap.scrollOffset,
+      anchorStatusId: snap.anchorStatusId,
+      anchorOffset: snap.anchorOffset,
+    );
+  }
+
+  void _restoreScrollPosition(
+    double offset, {
+    String anchorStatusId = '',
+    double anchorOffset = 0,
+  }) {
+    final token = ++_restoreToken;
+    final anchorIndex = anchorStatusId.isEmpty
+        ? -1
+        : _items.indexWhere((s) => s.id == anchorStatusId);
+    if (offset <= 0.5 &&
+        (anchorIndex < 0 || (anchorIndex == 0 && anchorOffset <= 0.5))) {
+      _isRestoringScroll = false;
+      return;
+    }
+    _isRestoringScroll = true;
+
+    var controllerWaitAttempts = 0;
+    var layoutAttempts = 0;
+    var didInitialJump = false;
+    var stalledCount = 0;
+    double? lastJumpTarget;
+
+    void finish() {
+      if (!mounted || token != _restoreToken) return;
+      _isRestoringScroll = false;
+      if (_controller.hasClients) {
+        _lastKnownOffset = _controller.offset;
+        final live = _captureAnchor();
+        if (live != null) {
+          _lastKnownAnchorId = live.statusId;
+          _lastKnownAnchorOffset = live.anchorOffset;
         }
-        return;
-      }
-      final maxExtent = _controller.position.maxScrollExtent;
-      final target = offset.clamp(0.0, maxExtent);
-      if ((_controller.offset - target).abs() > 0.5) {
-        _controller.jumpTo(target);
-      }
-      if (maxExtent < offset && attempt < 4) {
-        Future<void>.delayed(const Duration(milliseconds: 50), () {
-          if (mounted) applyJump(attempt + 1);
-        });
       }
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) => applyJump(0));
+    void step() {
+      if (!mounted || token != _restoreToken) return;
+      if (!_controller.hasClients) {
+        if (controllerWaitAttempts < 6) {
+          controllerWaitAttempts++;
+          WidgetsBinding.instance.addPostFrameCallback((_) => step());
+        } else {
+          finish();
+        }
+        return;
+      }
+
+      final position = _controller.position;
+      final maxExtent = position.maxScrollExtent;
+
+      if (!didInitialJump) {
+        didInitialJump = true;
+        final initialGuess = offset > 0.5
+            ? offset
+            : (anchorIndex > 0 ? anchorIndex * 240.0 + anchorOffset : anchorOffset);
+        final initialTarget = initialGuess.clamp(0.0, maxExtent);
+        if ((_controller.offset - initialTarget).abs() > 0.5) {
+          _controller.jumpTo(initialTarget);
+        }
+        if (anchorIndex < 0) {
+          if (maxExtent < offset && layoutAttempts < 4) {
+            layoutAttempts++;
+            Future<void>.delayed(const Duration(milliseconds: 50), step);
+          } else {
+            finish();
+          }
+          return;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) => step());
+        return;
+      }
+
+      if (anchorIndex < 0) {
+        final target = offset.clamp(0.0, maxExtent);
+        if ((_controller.offset - target).abs() > 0.5) {
+          _controller.jumpTo(target);
+        }
+        if (maxExtent < offset && layoutAttempts < 4) {
+          layoutAttempts++;
+          Future<void>.delayed(const Duration(milliseconds: 50), step);
+        } else {
+          finish();
+        }
+        return;
+      }
+
+      final viewportBox = _viewportBox();
+      if (viewportBox == null) {
+        if (layoutAttempts < 6) {
+          layoutAttempts++;
+          WidgetsBinding.instance.addPostFrameCallback((_) => step());
+        } else {
+          finish();
+        }
+        return;
+      }
+
+      final anchorRo = _itemKeys[anchorStatusId]?.currentContext?.findRenderObject();
+      if (anchorRo is RenderBox && anchorRo.attached && anchorRo.hasSize) {
+        final cardTop = anchorRo.localToGlobal(Offset.zero, ancestor: viewportBox).dy;
+        final desiredTop = -anchorOffset;
+        final delta = cardTop - desiredTop;
+        final target = (_controller.offset + delta).clamp(0.0, maxExtent);
+        final move = target - _controller.offset;
+        if (move.abs() > 0.75 && layoutAttempts < 12) {
+          layoutAttempts++;
+          _controller.jumpTo(target);
+          WidgetsBinding.instance.addPostFrameCallback((_) => step());
+          return;
+        }
+        finish();
+        return;
+      }
+
+      if (layoutAttempts >= 12) {
+        finish();
+        return;
+      }
+
+      int? minIdx;
+      int? maxIdx;
+      double minTop = 0;
+      double maxBottom = 0;
+      for (var i = 0; i < _items.length; i++) {
+        final ro = _itemKeys[_items[i].id]?.currentContext?.findRenderObject();
+        if (ro is! RenderBox || !ro.attached || !ro.hasSize) continue;
+        final top = ro.localToGlobal(Offset.zero, ancestor: viewportBox).dy;
+        final bottom = top + ro.size.height;
+        if (minIdx == null) {
+          minIdx = i;
+          minTop = top;
+        }
+        maxIdx = i;
+        maxBottom = bottom;
+      }
+
+      if (minIdx == null || maxIdx == null) {
+        layoutAttempts++;
+        WidgetsBinding.instance.addPostFrameCallback((_) => step());
+        return;
+      }
+
+      final visibleSpan = maxBottom - minTop;
+      final visibleCount = maxIdx - minIdx + 1;
+      final avgStride = (visibleCount > 0 && visibleSpan > 20)
+          ? visibleSpan / visibleCount
+          : 240.0;
+
+      final double estimatedDelta;
+      if (anchorIndex > maxIdx) {
+        final remaining = anchorIndex - maxIdx - 1;
+        estimatedDelta = math.max(
+          viewportBox.size.height * 0.5,
+          maxBottom + remaining * avgStride + anchorOffset,
+        );
+      } else {
+        final remaining = minIdx - anchorIndex;
+        estimatedDelta = math.min(
+          -viewportBox.size.height * 0.5,
+          minTop - remaining * avgStride + anchorOffset,
+        );
+      }
+
+      final nextTarget = (_controller.offset + estimatedDelta).clamp(0.0, maxExtent);
+      final prevTarget = lastJumpTarget;
+      if (prevTarget != null &&
+          (nextTarget - prevTarget).abs() < 0.5 &&
+          (nextTarget - _controller.offset).abs() < 0.5) {
+        stalledCount++;
+        if (stalledCount >= 2) {
+          finish();
+          return;
+        }
+      } else {
+        stalledCount = 0;
+      }
+      lastJumpTarget = nextTarget;
+      layoutAttempts++;
+      _controller.jumpTo(nextTarget);
+      WidgetsBinding.instance.addPostFrameCallback((_) => step());
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => step());
   }
 
-  Future<void> _saveCacheSnapshot({double? offsetOverride}) async {
+  Future<void> _saveCacheSnapshot({
+    double? offsetOverride,
+    String? anchorIdOverride,
+    double? anchorOffsetOverride,
+  }) async {
+    _saveDebounce?.cancel();
     if (_items.isEmpty) return;
     final uid = _cachedAccountUid;
     final offset = offsetOverride ??
         (_controller.hasClients ? _controller.offset : _lastKnownOffset);
     _lastKnownOffset = offset;
+
+    String anchorId;
+    double anchorOffset;
+    if (offset <= 0.5) {
+      anchorId = _items.first.id;
+      anchorOffset = 0;
+    } else if (anchorIdOverride != null) {
+      anchorId = anchorIdOverride;
+      anchorOffset = anchorOffsetOverride ?? 0;
+    } else {
+      final live = _captureAnchor();
+      if (live != null) {
+        anchorId = live.statusId;
+        anchorOffset = live.anchorOffset;
+      } else {
+        final keepLast = _lastKnownAnchorId.isNotEmpty &&
+            _items.any((s) => s.id == _lastKnownAnchorId);
+        anchorId = keepLast ? _lastKnownAnchorId : '';
+        anchorOffset = keepLast ? _lastKnownAnchorOffset : 0;
+      }
+    }
+    _lastKnownAnchorId = anchorId;
+    _lastKnownAnchorOffset = anchorOffset;
+
+    final sig =
+        '$uid|$_currentGroupKey|${_items.length}|${_items.first.id}|${_items.last.id}|$_maxId|${offset.toStringAsFixed(1)}|$anchorId|${anchorOffset.toStringAsFixed(1)}';
+    if (sig == _lastSavedSig) return;
+    _lastSavedSig = sig;
+
     await FeedCacheStore.instance.saveSnapshot(
       uid,
       CachedTimelineSnapshot(
@@ -237,6 +505,8 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
         hasMore: _hasMore,
         usingGuestFeed: _usingGuestFeed,
         scrollOffset: offset,
+        anchorStatusId: anchorId,
+        anchorOffset: anchorOffset,
       ),
     );
     await FeedCacheStore.instance.saveLastGroup(
@@ -329,37 +599,30 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
         : await FeedCacheStore.instance.loadSnapshot(uid, groupKey: key);
     if (!mounted) return;
     if (snap != null && snap.items.isNotEmpty) {
-      setState(() {
-        _items
-          ..clear()
-          ..addAll(_filter(snap.items));
-        _maxId = snap.maxId;
-        _page = snap.page;
-        _hasMore = snap.hasMore;
-        _usingGuestFeed = snap.usingGuestFeed;
-        _loading = false;
-        _error = null;
-        _lastKnownOffset = snap.scrollOffset;
-      });
-      _restoreScrollOffset(snap.scrollOffset);
+      _applyRestoredSnapshot(snap);
       return;
     }
     await _reload();
   }
 
   Future<void> _reload() async {
+    _cancelRestore();
     setState(() {
       _items.clear();
       _maxId = null;
       _hasMore = true;
       _lastKnownOffset = 0;
+      _lastKnownAnchorId = '';
+      _lastKnownAnchorOffset = 0;
     });
+    _pruneItemKeys();
     await _loadFirst(scrollToTopAfter: true);
   }
 
   Future<void> refresh() => _loadFirst(scrollToTopAfter: true);
 
   Future<void> scrollToTopAndRefresh() async {
+    _cancelRestore();
     if (_controller.hasClients && _controller.offset > 0) {
       _rememberedTopToggleOffset = _controller.offset;
       unawaited(_controller.animateTo(
@@ -372,6 +635,7 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
   }
 
   void scrollToTop() {
+    _cancelRestore();
     if (!_controller.hasClients) return;
     if (_controller.offset > 40) {
       _rememberedTopToggleOffset = _controller.offset;
@@ -442,6 +706,9 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
 
       if (!mounted) return;
       final filtered = _filter(page.items);
+      if (scrollToTopAfter) {
+        _cancelRestore();
+      }
       setState(() {
         _items
           ..clear()
@@ -451,8 +718,13 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
         _page = 1;
         _loading = false;
         _error = null;
-        if (scrollToTopAfter) _lastKnownOffset = 0;
+        if (scrollToTopAfter) {
+          _lastKnownOffset = 0;
+          _lastKnownAnchorId = filtered.isNotEmpty ? filtered.first.id : '';
+          _lastKnownAnchorOffset = 0;
+        }
       });
+      _pruneItemKeys();
       if (scrollToTopAfter && _controller.hasClients && _controller.offset > 0) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _controller.hasClients) {
@@ -512,14 +784,12 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
       }
       if (!mounted) return;
       setState(() {
-        final next = _filter(page.items);
         final seen = _items.map((s) => s.id).toSet();
-        for (final s in next) {
-          if (seen.add(s.id)) _items.add(s);
+        final appended = _filter(page.items).where((s) => seen.add(s.id)).toList();
+        if (!_usingGuestFeed && _group?.isHotChannel != true && appended.length > 1) {
+          WeiboApi.sortStatusesChronologically(appended);
         }
-        if (!_usingGuestFeed && _group?.isHotChannel != true) {
-          WeiboApi.sortStatusesChronologically(_items);
-        }
+        _items.addAll(appended);
         _maxId = page.maxId;
         _hasMore = page.hasMore;
         _page = nextPage;
@@ -552,6 +822,8 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
 
   void _removeStatus(String id) {
     setState(() => _items.removeWhere((e) => e.id == id));
+    _itemKeys.remove(id);
+    unawaited(_saveCacheSnapshot());
   }
 
   void _toast(String message) {
@@ -581,10 +853,15 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
       if (prevUid != nextUid || (previous?.isLoggedIn ?? false) != next.isLoggedIn) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
+          _cancelRestore();
           _items.clear();
+          _itemKeys.clear();
           _maxId = null;
           _group = null;
           _forcedGroup = null;
+          _lastKnownOffset = 0;
+          _lastKnownAnchorId = '';
+          _lastKnownAnchorOffset = 0;
           _loadGroups();
           _restoreOrLoadFirst();
         });
@@ -837,6 +1114,7 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
         if (index == _items.length) return _footer();
         final status = _items[index];
         return StatusCard(
+          key: _keyForStatus(status.id),
           status: status,
           onTap: () => _openDetail(status),
           onComment: () => _openDetail(status),
@@ -856,9 +1134,13 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
       },
     );
 
-    return RefreshIndicator(
-      color: ShareColors.accent,
-      onRefresh: () => _loadFirst(scrollToTopAfter: true),
+    final scrollableChild = NotificationListener<ScrollStartNotification>(
+      onNotification: (notification) {
+        if (_isRestoringScroll && notification.dragDetails != null) {
+          _cancelRestore();
+        }
+        return false;
+      },
       child: ref.watch(settingsProvider).fastScroll
           ? Scrollbar(
               controller: _controller,
@@ -869,6 +1151,12 @@ class FeedPageState extends ConsumerState<FeedPage> with WidgetsBindingObserver 
               child: list,
             )
           : list,
+    );
+
+    return RefreshIndicator(
+      color: ShareColors.accent,
+      onRefresh: () => _loadFirst(scrollToTopAfter: true),
+      child: scrollableChild,
     );
   }
 

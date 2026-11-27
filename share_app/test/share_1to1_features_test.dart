@@ -1028,6 +1028,168 @@ void main() {
     expect(pos, greaterThan(100.0));
   });
 
+  test('FeedCacheStore keeps window around anchorStatusId beyond 120 items without losing tail cursor',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final many = List.generate(
+      340,
+      (i) => Status(
+        id: '${990000 - i}',
+        mblogid: 'M${990000 - i}',
+        createdAt: '',
+        textHtml: '第 $i 条',
+        textRaw: '第 $i 条',
+        source: 'Share',
+        user: const User(id: 'u1', name: '作者', avatar: ''),
+      ),
+    );
+    final anchor = many[160];
+
+    await FeedCacheStore.instance.saveSnapshot(
+      '123456',
+      CachedTimelineSnapshot(
+        groupKey: 'all',
+        items: many,
+        maxId: 'tail_cursor',
+        page: 17,
+        hasMore: true,
+        scrollOffset: 38000.0,
+        anchorStatusId: anchor.id,
+        anchorOffset: 48.5,
+      ),
+    );
+
+    final loaded = await FeedCacheStore.instance.loadSnapshot('123456', groupKey: 'all');
+    expect(loaded, isNotNull);
+    expect(loaded!.items.length, CachedTimelineSnapshot.maxCachedItems);
+    expect(loaded.items.any((s) => s.id == anchor.id), isTrue);
+    expect(loaded.anchorStatusId, anchor.id);
+    expect(loaded.anchorOffset, closeTo(48.5, 0.01));
+    expect(loaded.maxId, loaded.items.last.id);
+  });
+
+  testWidgets(
+      'FeedPage persists live anchor on lifecycle pause and converges to exact anchored card despite drifted raw offset',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final unevenItems = List.generate(28, (i) {
+      final isTall = i >= 12 && i < 20;
+      final body = isTall
+          ? List.generate(7, (line) => '第 $i 条超长多行内容第 ${line + 1} 行用于制造高度差').join('\n')
+          : '第 $i 条短内容';
+      return Status(
+        id: '${950000 - i}',
+        mblogid: 'M${950000 - i}',
+        createdAt: '',
+        textHtml: body.replaceAll('\n', '<br/>'),
+        textRaw: body,
+        source: 'Share',
+        user: User(id: 'u$i', name: '博主$i', avatar: ''),
+        retweeted: isTall
+            ? Status(
+                id: 'r$i',
+                mblogid: 'MR$i',
+                createdAt: '',
+                textHtml: '被转发的较长内容行1<br/>行2<br/>行3',
+                textRaw: '被转发的较长内容行1\n行2\n行3',
+                source: 'Share',
+                user: const User(id: 'ru', name: '原博主', avatar: ''),
+              )
+            : null,
+      );
+    });
+
+    await tester.runAsync(() async {
+      await FeedCacheStore.instance.saveSnapshot(
+        'guest',
+        CachedTimelineSnapshot(
+          groupKey: 'all',
+          items: unevenItems,
+          page: 2,
+          hasMore: true,
+          scrollOffset: 0,
+        ),
+      );
+    });
+
+    const settingsNoAutoRefresh = AppSettings(
+      themeKey: 'elegant_purple',
+      prefs: {'start_refresh_status': false},
+    );
+
+    Widget buildApp() => ProviderScope(
+          overrides: [
+            settingsProvider.overrideWith((_) => SettingsNotifier(settingsNoAutoRefresh)),
+          ],
+          child: const MaterialApp(home: FeedPage()),
+        );
+
+    await tester.pumpWidget(buildApp());
+    await tester.pump();
+    for (var step = 0; step < 3; step++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 60)));
+      await tester.pump();
+    }
+
+    final initialList = tester.widget<ListView>(find.byType(ListView).first);
+    initialList.controller!.jumpTo(2600.0);
+    await tester.pump();
+
+    // Simulate OS moving app to background before debounce timer expires.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 60)));
+
+    final saved = await tester.runAsync(
+      () => FeedCacheStore.instance.loadSnapshot('guest', groupKey: 'all'),
+    );
+    expect(saved, isNotNull);
+    expect(saved!.anchorStatusId, isNotEmpty);
+
+    Future<void> verifyColdRestoreWithDriftedOffset(double fakeRawOffset) async {
+      await tester.runAsync(() async {
+        await FeedCacheStore.instance.saveSnapshot(
+          'guest',
+          CachedTimelineSnapshot(
+            groupKey: 'all',
+            items: unevenItems,
+            page: 2,
+            hasMore: true,
+            scrollOffset: fakeRawOffset,
+            anchorStatusId: saved.anchorStatusId,
+            anchorOffset: saved.anchorOffset,
+          ),
+        );
+      });
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpWidget(buildApp());
+      await tester.pump();
+      for (var step = 0; step < 3; step++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 60)));
+        await tester.pump();
+      }
+      for (var frame = 0; frame < 12; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      final restoredListBox = tester.renderObject<RenderBox>(find.byType(ListView).first);
+      final anchorCardFinder = find.byWidgetPredicate(
+        (w) => w is StatusCard && w.status.id == saved.anchorStatusId,
+      );
+      expect(anchorCardFinder, findsOneWidget);
+      final anchorBox = tester.renderObject<RenderBox>(anchorCardFinder);
+      final actualCardTop = anchorBox.localToGlobal(Offset.zero, ancestor: restoredListBox).dy;
+      expect(actualCardTop, closeTo(-saved.anchorOffset, 2.0));
+    }
+
+    // Verify anchor convergence even when cold-start offscreen estimation overshoots (+700px)
+    // or undershoots outside viewport+cacheExtent (-1200px).
+    await verifyColdRestoreWithDriftedOffset(saved.scrollOffset + 700.0);
+    await verifyColdRestoreWithDriftedOffset((saved.scrollOffset - 1200.0).clamp(1.0, 999999.0));
+  });
+
   test('v1.5 models: Comment nested replies/more_info/pics, Status hotComment, Pic GIF & long badges', () {
     final c = Comment.fromJson({
       'idstr': 'c100',

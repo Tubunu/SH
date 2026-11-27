@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -6,6 +7,9 @@ import 'models.dart';
 import 'share_core.dart';
 
 class CachedTimelineSnapshot {
+  static const int maxCachedItems = 240;
+  static const int _headContextItems = 80;
+
   final String groupKey;
   final List<Status> items;
   final String? maxId;
@@ -14,6 +18,7 @@ class CachedTimelineSnapshot {
   final bool usingGuestFeed;
   final double scrollOffset;
   final String anchorStatusId;
+  final double anchorOffset;
   final int savedAtMs;
 
   const CachedTimelineSnapshot({
@@ -25,18 +30,54 @@ class CachedTimelineSnapshot {
     this.usingGuestFeed = false,
     this.scrollOffset = 0,
     this.anchorStatusId = '',
+    this.anchorOffset = 0,
     this.savedAtMs = 0,
   });
 
+  /// Keeps a window of up to [maxItems] items centered around [anchorStatusId]
+  /// so deep scrolls past 120+ items never truncate away the user's anchor.
+  CachedTimelineSnapshot trimmedForCache({int maxItems = maxCachedItems}) {
+    if (items.length <= maxItems) return this;
+    final anchorIdx = anchorStatusId.isEmpty
+        ? 0
+        : math.max(0, items.indexWhere((s) => s.id == anchorStatusId));
+    final maxStart = items.length - maxItems;
+    final start = anchorIdx > _headContextItems
+        ? math.min(anchorIdx - _headContextItems, maxStart)
+        : 0;
+    final end = start + maxItems;
+    final sliced = items.sublist(start, end);
+    final trimmedMaxId =
+        (end < items.length && !usingGuestFeed && sliced.isNotEmpty)
+            ? sliced.last.id
+            : maxId;
+    final adjustedOffset = (start > 0 && anchorIdx > 0)
+        ? scrollOffset * ((anchorIdx - start) / anchorIdx)
+        : scrollOffset;
+    return CachedTimelineSnapshot(
+      groupKey: groupKey,
+      items: sliced,
+      maxId: trimmedMaxId,
+      page: page,
+      hasMore: hasMore,
+      usingGuestFeed: usingGuestFeed,
+      scrollOffset: adjustedOffset,
+      anchorStatusId: anchorStatusId,
+      anchorOffset: anchorOffset,
+      savedAtMs: savedAtMs,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'groupKey': groupKey,
-        'items': items.take(120).map((s) => s.toJson()).toList(),
+        'items': items.take(maxCachedItems).map((s) => s.toJson()).toList(),
         if (maxId != null) 'maxId': maxId,
         'page': page,
         'hasMore': hasMore,
         'usingGuestFeed': usingGuestFeed,
         'scrollOffset': scrollOffset,
         'anchorStatusId': anchorStatusId,
+        'anchorOffset': anchorOffset,
         'savedAtMs': savedAtMs,
       };
 
@@ -67,6 +108,7 @@ class CachedTimelineSnapshot {
         usingGuestFeed: jsonBool(decoded['usingGuestFeed']),
         scrollOffset: jsonDouble(decoded['scrollOffset']),
         anchorStatusId: '${decoded['anchorStatusId'] ?? ''}',
+        anchorOffset: jsonDouble(decoded['anchorOffset']),
         savedAtMs: jsonInt(decoded['savedAtMs']),
       );
     } catch (_) {
@@ -168,7 +210,7 @@ class FeedCacheStore {
     CachedTimelineSnapshot snapshot,
   ) async {
     if (snapshot.items.isEmpty) return;
-    final payload = CachedTimelineSnapshot(
+    final trimmed = CachedTimelineSnapshot(
       groupKey: snapshot.groupKey,
       items: snapshot.items,
       maxId: snapshot.maxId,
@@ -177,13 +219,14 @@ class FeedCacheStore {
       usingGuestFeed: snapshot.usingGuestFeed,
       scrollOffset: snapshot.scrollOffset < 0 ? 0 : snapshot.scrollOffset,
       anchorStatusId: snapshot.anchorStatusId,
+      anchorOffset: snapshot.anchorOffset,
       savedAtMs: snapshot.savedAtMs > 0
           ? snapshot.savedAtMs
           : DateTime.now().millisecondsSinceEpoch,
-    );
+    ).trimmedForCache();
     await _writeRaw(
-      _snapshotKey(uid, snapshot.groupKey),
-      jsonEncode(payload.toJson()),
+      _snapshotKey(uid, trimmed.groupKey),
+      jsonEncode(trimmed.toJson()),
     );
   }
 
