@@ -2112,4 +2112,209 @@ void main() {
     expect(c.replies.single.user?.verifiedType, -1);
     expect(c.replies.single.user?.followers, 0);
   });
+
+  testWidgets('Mixed pics + video posts render all media in a unified 9-grid both in detail and inside retweet box',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // 1. Parse mix_media_info payload where pics + video sit in mix_media_info.items without pic_infos.
+    final mixedInfoStatus = Status.fromJson({
+      'idstr': '5369533460122999',
+      'mblogid': 'ArkMix01',
+      'text': '图文混排原博',
+      'user': {'id': '6279793937', 'screen_name': '明日方舟Arknights'},
+      'mix_media_info': {
+        'items': [
+          {
+            'type': 'pic',
+            'id': 'pid0',
+            'data': {
+              'pic_id': 'pid0',
+              'large': {'url': 'https://wx1.sinaimg.cn/large/pid0.jpg', 'width': 1080, 'height': 1080},
+            },
+          },
+          {
+            'type': 'video',
+            'id': '1034:5369511348731982',
+            'data': {
+              'object_id': '1034:5369511348731982',
+              'page_pic': {'url': 'https://wx3.sinaimg.cn/orj480/cover.jpg'},
+              'media_info': {'duration': 60, 'mp4_720p_mp4': 'https://f.video.weibocdn.com/a.mp4'},
+            },
+          },
+          {
+            'type': 'pic',
+            'id': 'pid1',
+            'data': {
+              'pic_id': 'pid1',
+              'large': {'url': 'https://wx1.sinaimg.cn/large/pid1.gif', 'width': 500, 'height': 726},
+            },
+          },
+        ],
+      },
+    });
+    expect(mixedInfoStatus.pics, hasLength(2));
+    expect(mixedInfoStatus.isVideo, isTrue);
+    expect(mixedInfoStatus.videoDuration, 60);
+    expect(mixedInfoStatus.videoMixIndex, 1);
+
+    // 2. Parse mobile mix_media_ids (7 pics + 1 video at slot 7) and verify full-width 3x3 unified grid.
+    final picIds = [
+      '006QZngZgy1p0',
+      '006QZngZgy1p1',
+      '006QZngZgy1p2',
+      '006QZngZgy1p3',
+      '006QZngZgy1p4',
+      '006QZngZgy1p5',
+      '006QZngZgy1p6',
+    ];
+    final sevenPicStatus = Status.fromJson({
+      'idstr': '5369533460122337',
+      'mblogid': 'ArkMain',
+      'text': '绿影之下 - 麦哲伦',
+      'user': {'id': '6279793937', 'screen_name': '明日方舟Arknights'},
+      'pic_ids': picIds,
+      'pic_infos': {
+        for (var i = 0; i < picIds.length; i++)
+          picIds[i]: {
+            'large': {
+              'url': i == 0
+                  ? 'https://wx3.sinaimg.cn/large/${picIds[i]}.jpg'
+                  : 'https://wx3.sinaimg.cn/large/${picIds[i]}.gif',
+              'width': 500,
+              'height': 500,
+            },
+          },
+      },
+      'mix_media_ids': [...picIds, 'http://t.cn/AXTEvNes'],
+      'page_info': {
+        'type': '11',
+        'object_id': '1034:5369511348731982',
+        'page_pic': {'url': 'https://wx3.sinaimg.cn/orj480/cover.jpg'},
+        'media_info': {'duration': 60, 'mp4_720p_mp4': 'https://f.video.weibocdn.com/v.mp4'},
+      },
+    });
+    expect(sevenPicStatus.pics, hasLength(7));
+    expect(sevenPicStatus.isVideo, isTrue);
+    expect(sevenPicStatus.videoMixIndex, 7);
+
+    int? tappedPic;
+    var tappedVideo = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: StatusCard(
+                status: sevenPicStatus,
+                showActions: false,
+                fullText: true,
+                onImageTap: (i) => tappedPic = i,
+                onVideoTap: () => tappedVideo++,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // All 6 GIF pics + 1 video tile render together inside ONE unified 9-grid (not hidden by else-if!).
+    expect(find.byType(PicGrid), findsOneWidget);
+    expect(find.text('GIF'), findsNWidgets(6));
+    expect(find.text('01:00'), findsOneWidget);
+    expect(find.byType(AspectRatio), findsNothing);
+    expect(tester.getSize(find.byType(PicGrid)).width, greaterThan(330));
+
+    await tester.tap(find.text('01:00'));
+    await tester.pump();
+    expect(tappedVideo, 1);
+
+    await tester.tap(find.text('GIF').first);
+    await tester.pump();
+    expect(tappedPic, 1);
+
+    // 3. Verify interleaved PicGrid maps pic indices accurately around the video tile.
+    int? interleavedPic;
+    var interleavedVideo = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: PicGrid(
+              pics: mixedInfoStatus.pics,
+              video: PicGridVideo(
+                coverUrl: mixedInfoStatus.videoCover,
+                durationSeconds: mixedInfoStatus.videoDuration,
+                onTap: () => interleavedVideo++,
+              ),
+              videoIndex: mixedInfoStatus.videoMixIndex,
+              maxWidth: 340,
+              onTap: (i) => interleavedPic = i,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('GIF'), findsOneWidget);
+    expect(find.text('01:00'), findsOneWidget);
+    await tester.tap(find.text('GIF'));
+    await tester.pump();
+    expect(interleavedPic, 1);
+    await tester.tap(find.text('01:00'));
+    await tester.pump();
+    expect(interleavedVideo, 1);
+
+    // 4. Verify retweeted mixed post renders full-width unified 9-grid inside quote box (no 0.62x squish).
+    final reposted = Status(
+      id: '5369539999999999',
+      mblogid: 'RepostMix',
+      createdAt: '',
+      textHtml: '转发微博',
+      textRaw: '转发微博',
+      source: 'Share',
+      user: const User(id: '300', name: '-大地寂寂-', avatar: ''),
+      retweeted: sevenPicStatus,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: StatusCard(
+                status: reposted,
+                showActions: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final quoteBoxFinder = find.byWidgetPredicate(
+      (w) => w is Material && w.color == ShareColors.repostBg,
+    );
+    expect(quoteBoxFinder, findsOneWidget);
+    final quotePicGrid = find.descendant(
+      of: quoteBoxFinder,
+      matching: find.byType(PicGrid),
+    );
+    expect(quotePicGrid, findsOneWidget);
+    expect(
+      find.descendant(of: quotePicGrid, matching: find.text('01:00')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: quotePicGrid, matching: find.text('GIF')),
+      findsNWidgets(6),
+    );
+    expect(tester.getSize(quotePicGrid).width, greaterThan(300));
+  });
 }

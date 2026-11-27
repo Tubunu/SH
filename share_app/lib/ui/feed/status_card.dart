@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -183,7 +185,7 @@ class _StatusCardState extends ConsumerState<StatusCard> {
     const left = 16.0;
     final bodyIndent =
         (settings.leftIndent && !settings.hideStatusAvatar) ? 48.0 : 0.0;
-    final cardInset = settings.cardStyle ? 16.0 : 0.0;
+    final cardInset = settings.cardStyle ? 17.0 : 0.0;
     final contentWidth = screenWidth - left * 2 - bodyIndent - cardInset;
 
     final card = settings.cardStyle;
@@ -393,7 +395,7 @@ class _StatusCardState extends ConsumerState<StatusCard> {
   }
 
   Widget _body(BuildContext context, double contentWidth, AppSettings settings) {
-    final gridWidth = contentWidth.clamp(120.0, 330.0);
+    final gridWidth = contentWidth.clamp(120.0, 420.0);
     final fs = settings.fontSize;
     final showExpandHint = !widget.fullText && status.isLongText;
     final effectiveRetweeted = status.resolvedRetweeted;
@@ -468,24 +470,15 @@ class _StatusCardState extends ConsumerState<StatusCard> {
               ),
             ),
         ],
-        if (effectiveRetweeted == null && status.hasVideoMedia) ...[
-          const SizedBox(height: 10),
-          GestureDetector(onTap: onVideoTap, child: _videoCover(gridWidth)),
-        ] else if (status.pics.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          PicGrid(
-            pics: status.pics,
-            maxWidth: gridWidth,
-            onTap: onImageTap,
-            onLongPress: (i) => ShareActions.showPicLongPressMenu(
-              context,
-              status.pics,
-              i,
-              deduplicateName: settings.samePhotoName,
-              onViewOriginal: onImageTap == null ? null : () => onImageTap!(i),
-            ),
-          ),
-        ],
+        ..._mediaBlocks(
+          context,
+          status,
+          maxWidth: gridWidth,
+          settings: settings,
+          allowVideo: effectiveRetweeted == null,
+          imageTapHandler: onImageTap,
+          videoTapHandler: onVideoTap ?? () => ShareActions.openStatusVideo(context, status),
+        ),
         if (widget.showRetweet && effectiveRetweeted != null) ...[
           const SizedBox(height: 8),
           _retweetBox(context, effectiveRetweeted, gridWidth, fs, settings),
@@ -635,6 +628,75 @@ class _StatusCardState extends ConsumerState<StatusCard> {
     ShareActions.openStatusVideo(context, original);
   }
 
+  List<Widget> _mediaBlocks(
+    BuildContext context,
+    Status target, {
+    required double maxWidth,
+    required AppSettings settings,
+    required bool allowVideo,
+    required void Function(int index)? imageTapHandler,
+    required VoidCallback? videoTapHandler,
+    double topSpacing = 10,
+  }) {
+    final hasPics = target.pics.isNotEmpty;
+    final showVideo = allowVideo && target.hasVideoMedia;
+    if (!hasPics && !showVideo) return const [];
+
+    // 混排图文（图片 <= 8 张 + 1 个视频）：借鉴官方九宫格，将视频直接拼入统一九宫格。
+    if (hasPics && showVideo && target.pics.length <= 8) {
+      return [
+        SizedBox(height: topSpacing),
+        PicGrid(
+          pics: target.pics,
+          video: PicGridVideo(
+            coverUrl: target.videoCover,
+            durationSeconds: target.videoDuration,
+            onTap: videoTapHandler,
+          ),
+          videoIndex: target.videoMixIndex,
+          maxWidth: maxWidth,
+          onTap: imageTapHandler,
+          onLongPress: (i) => ShareActions.showPicLongPressMenu(
+            context,
+            target.pics,
+            i,
+            deduplicateName: settings.samePhotoName,
+            onViewOriginal: imageTapHandler == null ? null : () => imageTapHandler(i),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      if (hasPics) ...[
+        SizedBox(height: topSpacing),
+        PicGrid(
+          pics: target.pics,
+          maxWidth: maxWidth,
+          onTap: imageTapHandler,
+          onLongPress: (i) => ShareActions.showPicLongPressMenu(
+            context,
+            target.pics,
+            i,
+            deduplicateName: settings.samePhotoName,
+            onViewOriginal: imageTapHandler == null ? null : () => imageTapHandler(i),
+          ),
+        ),
+      ],
+      if (showVideo) ...[
+        SizedBox(height: hasPics ? 8 : topSpacing),
+        GestureDetector(
+          onTap: videoTapHandler,
+          child: _videoCover(
+            maxWidth,
+            coverOverride: target.videoCover ?? '',
+            durationOverride: target.videoDuration,
+          ),
+        ),
+      ],
+    ];
+  }
+
   Widget _retweetBox(
     BuildContext context,
     Status original,
@@ -648,6 +710,14 @@ class _StatusCardState extends ConsumerState<StatusCard> {
     final canOpen = original.id.isNotEmpty || original.mblogid.isNotEmpty;
     final tapHandler = widget.onRetweetTap ??
         (canOpen ? () => _openRetweetDetail(context, original) : null);
+    final innerWidth = math.max(120.0, width - 22.0);
+    void openOrigImage(int index) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => GalleryPage(pics: original.pics, initialIndex: index),
+        ),
+      );
+    }
 
     return Material(
       color: ShareColors.repostBg,
@@ -674,42 +744,18 @@ class _StatusCardState extends ConsumerState<StatusCard> {
                   settings: settings,
                 ),
               ),
-              if (original.pics.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                PicGrid(
-                  pics: original.pics,
-                  maxWidth: width * 0.62,
-                  onTap: (index) => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => GalleryPage(pics: original.pics, initialIndex: index),
-                    ),
-                  ),
-                  onLongPress: (index) => ShareActions.showPicLongPressMenu(
-                    context,
-                    original.pics,
-                    index,
-                    deduplicateName: settings.samePhotoName,
-                    onViewOriginal: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => GalleryPage(pics: original.pics, initialIndex: index),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              if (original.hasVideoMedia) ...[
-                const SizedBox(height: 8),
-                GestureDetector(
-                  onTap: original.hasPlayableVideo
-                      ? () => _openRetweetVideo(context, original)
-                      : onVideoTap,
-                  child: _videoCover(
-                    width,
-                    coverOverride: original.videoCover ?? '',
-                    durationOverride: original.videoDuration,
-                  ),
-                ),
-              ],
+              ..._mediaBlocks(
+                context,
+                original,
+                maxWidth: innerWidth,
+                settings: settings,
+                allowVideo: true,
+                topSpacing: 8,
+                imageTapHandler: openOrigImage,
+                videoTapHandler: original.hasPlayableVideo
+                    ? () => _openRetweetVideo(context, original)
+                    : onVideoTap,
+              ),
             ],
           ),
         ),

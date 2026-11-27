@@ -538,7 +538,9 @@ class _PosterCanvas extends StatelessWidget {
         if (showImages && status.pics.isNotEmpty) ...[
           const SizedBox(height: 14),
           _stackedImages(status.pics),
-        ] else if (effectiveRetweeted == null &&
+        ],
+        if (showImages &&
+            effectiveRetweeted == null &&
             status.isVideo &&
             status.videoCover != null &&
             status.videoCover!.isNotEmpty) ...[
@@ -714,7 +716,9 @@ class _PosterCanvas extends StatelessWidget {
           if (showImages && original.pics.isNotEmpty) ...[
             const SizedBox(height: 10),
             _stackedImages(original.pics),
-          ] else if (original.isVideo &&
+          ],
+          if (showImages &&
+              original.isVideo &&
               original.videoCover != null &&
               original.videoCover!.isNotEmpty) ...[
             const SizedBox(height: 10),

@@ -339,6 +339,23 @@ class Pic {
 
   bool get isLongImage => width > 0 && height > 0 && (height / width) >= 2.2;
 
+  static Pic? _fromPicInfoEntry(String id, dynamic rawInfo) {
+    if (rawInfo is! Map) return null;
+    final large = rawInfo['large'] ?? rawInfo['bmiddle'] ?? rawInfo['thumbnail'];
+    if (large is! Map) return null;
+    final origUrl = (rawInfo['original'] is Map ? rawInfo['original']['url'] : null) ??
+        large['url'];
+    final urlStr = jsonStr(large['url']);
+    if (urlStr.isEmpty) return null;
+    return Pic(
+      url: urlStr,
+      large: jsonNullableStr(origUrl),
+      width: jsonInt(large['width']),
+      height: jsonInt(large['height']),
+      pid: id.isNotEmpty ? id : extractPid(urlStr),
+    );
+  }
+
   static List<Pic> parseFromMapList(Map<String, dynamic> json) {
     final pics = <Pic>[];
     final infoMap = json['pic_infos'];
@@ -346,19 +363,8 @@ class Pic {
       final ids = (json['pic_ids'] as List?)?.map((e) => '$e').toList() ??
           infoMap.keys.map((e) => '$e').toList();
       for (final id in ids) {
-        final info = infoMap[id];
-        if (info is! Map) continue;
-        final large = (info['large'] ?? info['bmiddle'] ?? info['thumbnail']) as Map?;
-        if (large == null) continue;
-        final origUrl = (info['original'] is Map ? info['original']['url'] : null) ??
-            large['url'];
-        pics.add(Pic(
-          url: jsonStr(large['url']),
-          large: jsonNullableStr(origUrl),
-          width: jsonInt(large['width']),
-          height: jsonInt(large['height']),
-          pid: id,
-        ));
+        final pic = _fromPicInfoEntry(id, infoMap[id]);
+        if (pic != null) pics.add(pic);
       }
       if (pics.isNotEmpty) return pics;
     }
@@ -445,6 +451,7 @@ class Status {
   final String? videoCover;
   final String? videoUrl;
   final String? videoObjectId;
+  final int? videoMixIndex;
   final String? topic;
   final Comment? hotComment;
 
@@ -472,13 +479,20 @@ class Status {
     this.videoCover,
     this.videoUrl,
     this.videoObjectId,
+    this.videoMixIndex,
     this.topic,
     this.hotComment,
   });
 
   factory Status.fromJson(Map<String, dynamic> json) {
     final pageInfo = jsonMap(json['page_info']);
-    final outerIsVideo = pageInfo != null &&
+    final mixMediaInfo = jsonMap(json['mix_media_info']);
+    final mixItems = (mixMediaInfo?['items'] is List)
+        ? (mixMediaInfo!['items'] as List)
+        : const <dynamic>[];
+
+    Map<String, dynamic>? mixVideoData;
+    var outerIsVideo = pageInfo != null &&
         (pageInfo['type'] == 'video' ||
             pageInfo['object_type'] == 'video' ||
             pageInfo['media_info'] is Map);
@@ -489,24 +503,8 @@ class Status {
       final ids = (json['pic_ids'] as List?)?.map((e) => '$e').toList() ??
           infoMap.keys.toList();
       for (final id in ids) {
-        final info = infoMap[id];
-        if (info is! Map) continue;
-        final largeRaw = info['large'] ?? info['bmiddle'] ?? info['thumbnail'];
-        if (largeRaw is! Map) continue;
-        final bmidRaw = info['bmiddle'] ?? info['large'];
-        final origRaw = info['original'];
-        pics.add(Pic(
-          url: jsonStr(largeRaw['url']),
-          large: jsonNullableStr(
-              (origRaw is Map ? origRaw['url'] : null) ?? largeRaw['url']),
-          width: jsonInt(largeRaw['width']),
-          height: jsonInt(largeRaw['height']),
-          pid: id,
-        ));
-        // keep bmiddle for grid when large is oversized
-        if (bmidRaw is Map && pics.isNotEmpty) {
-          // no-op: bmiddle handled by url rewrite in widget
-        }
+        final pic = Pic._fromPicInfoEntry(id, infoMap[id]);
+        if (pic != null) pics.add(pic);
       }
     } else if (json['pics'] is List) {
       for (final p in (json['pics'] as List)) {
@@ -545,6 +543,52 @@ class Status {
       }
     }
 
+    // 兼容 `/ajax/statuses/show` 等仅把图文混排放在 `mix_media_info.items` 的响应，
+    // 并精确记录视频在混排九宫格中的插入位置。
+    int? videoMixIndex;
+    if (mixItems.isNotEmpty) {
+      final mixPics = <Pic>[];
+      var picCountBeforeVideo = 0;
+      for (final rawEntry in mixItems) {
+        final entry = jsonMap(rawEntry);
+        if (entry == null) continue;
+        final type = jsonStr(entry['type']).toLowerCase();
+        final data = jsonMap(entry['data']);
+        if (type == 'pic' && data != null) {
+          final pid = jsonStr(data['pic_id'] ?? entry['id']);
+          final pic = Pic._fromPicInfoEntry(pid, data);
+          if (pic != null) mixPics.add(pic);
+          if (videoMixIndex == null) picCountBeforeVideo++;
+        } else if (type == 'video' || (data != null && data['media_info'] is Map)) {
+          videoMixIndex ??= picCountBeforeVideo;
+          mixVideoData ??= data;
+        }
+      }
+      if (pics.isEmpty && mixPics.isNotEmpty) {
+        pics.addAll(mixPics);
+      }
+    }
+
+    if (videoMixIndex == null && json['mix_media_ids'] is List && pics.isNotEmpty) {
+      final pidSet = pics.map((p) => p.pid).whereType<String>().toSet();
+      var picCountBefore = 0;
+      for (final rawId in (json['mix_media_ids'] as List)) {
+        final entryId = '$rawId'.trim();
+        if (entryId.isEmpty) continue;
+        if (pidSet.contains(entryId)) {
+          picCountBefore++;
+        } else {
+          videoMixIndex = picCountBefore;
+          break;
+        }
+      }
+    }
+
+    final videoSourceMap = pageInfo ?? mixVideoData;
+    if (!outerIsVideo && mixVideoData != null) {
+      outerIsVideo = true;
+    }
+
     final retweetedMap = jsonMap(json['retweeted_status']);
     var retweeted = retweetedMap != null ? Status.fromJson(retweetedMap) : null;
     final userMap = jsonMap(json['user']);
@@ -555,22 +599,23 @@ class Status {
         longTextStr.isNotEmpty ? longTextStr : jsonStr(json['text']);
     final attStatus = jsonInt(json['attitudes_status']);
 
-    final picInfoMap = pageInfo?['pic_info'];
-    final outerVideoCover = _picUrl(pageInfo?['page_pic']) ??
+    final picInfoMap = videoSourceMap?['pic_info'];
+    final outerVideoCover = _picUrl(videoSourceMap?['page_pic']) ??
         _picUrl(picInfoMap is Map
             ? (picInfoMap['pic_big'] ?? picInfoMap['pic_middle'] ?? picInfoMap['pic_small'])
             : null);
-    final rawObjectId = jsonStr(pageInfo?['object_id']).trim();
+    final rawObjectId = jsonStr(videoSourceMap?['object_id']).trim();
     final outerVideoObjectId = rawObjectId.isNotEmpty ? rawObjectId : null;
-    final mediaInfoMap = jsonMap(pageInfo?['media_info']);
+    final mediaInfoMap = jsonMap(videoSourceMap?['media_info']);
     final outerVideoDuration = jsonInt(mediaInfoMap?['duration']);
-    final outerVideoUrl = _videoUrl(pageInfo, allowPageUrlFallback: outerIsVideo);
+    final outerVideoUrl = _videoUrl(videoSourceMap, allowPageUrlFallback: outerIsVideo);
 
     var effectiveIsVideo = outerIsVideo;
     var effectiveVideoDuration = outerVideoDuration;
     String? effectiveVideoCover = outerVideoCover;
     String? effectiveVideoUrl = outerVideoUrl;
     String? effectiveVideoObjectId = outerVideoObjectId;
+    int? effectiveVideoMixIndex = videoMixIndex;
 
     // 转发微博时，微博接口常把原博的视频 page_info 挂在外层转发微博对象上（而非 retweeted_status 内）。
     // 将此类视频元数据归并回被转发的原微博内部，使视频显示在引用框内部而非外层。
@@ -581,12 +626,14 @@ class Status {
         outerCover: outerVideoCover,
         outerUrl: outerVideoUrl,
         outerObjectId: outerVideoObjectId,
+        outerMixIndex: effectiveVideoMixIndex,
       );
       effectiveIsVideo = false;
       effectiveVideoDuration = 0;
       effectiveVideoCover = null;
       effectiveVideoUrl = null;
       effectiveVideoObjectId = null;
+      effectiveVideoMixIndex = null;
     }
 
     final rawHotComment = json['hot_comment'] ??
@@ -634,6 +681,7 @@ class Status {
       videoCover: effectiveVideoCover,
       videoUrl: effectiveVideoUrl,
       videoObjectId: effectiveVideoObjectId,
+      videoMixIndex: effectiveVideoMixIndex,
       topic: _topicTitle(json['topic_struct']),
       hotComment: (hotComment != null && hotComment.textHtml.isNotEmpty) ? hotComment : null,
     );
@@ -645,6 +693,7 @@ class Status {
     required String? outerCover,
     required String? outerUrl,
     required String? outerObjectId,
+    int? outerMixIndex,
   }) {
     final origCover =
         (original.videoCover != null && original.videoCover!.isNotEmpty)
@@ -665,6 +714,7 @@ class Status {
       videoCover: origCover,
       videoUrl: origUrl,
       videoObjectId: origObjectId,
+      videoMixIndex: original.videoMixIndex ?? outerMixIndex,
     );
   }
 
@@ -687,6 +737,7 @@ class Status {
       outerCover: videoCover,
       outerUrl: videoUrl,
       outerObjectId: videoObjectId,
+      outerMixIndex: videoMixIndex,
     );
   }
 
@@ -721,6 +772,7 @@ class Status {
     String? videoCover,
     String? videoUrl,
     String? videoObjectId,
+    int? videoMixIndex,
   }) {
     return Status(
       id: id,
@@ -746,6 +798,7 @@ class Status {
       videoCover: videoCover ?? this.videoCover,
       videoUrl: videoUrl ?? this.videoUrl,
       videoObjectId: videoObjectId ?? this.videoObjectId,
+      videoMixIndex: videoMixIndex ?? this.videoMixIndex,
       topic: topic,
       hotComment: hotComment,
     );
@@ -780,6 +833,13 @@ class Status {
               if (videoUrl != null) 'mp4_720p_mp4': videoUrl,
             },
           },
+        if (videoMixIndex != null && pics.isNotEmpty)
+          'mix_media_ids': [
+            for (var i = 0; i <= pics.length; i++) ...[
+              if (i == videoMixIndex) videoObjectId ?? 'video',
+              if (i < pics.length) pics[i].pid ?? 'p$i',
+            ],
+          ],
         if (topic != null && topic!.isNotEmpty)
           'topic_struct': [
             {'topic_title': topic},
